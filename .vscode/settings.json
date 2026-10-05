@@ -1,0 +1,9 @@
+{
+  "prettier.configPath": "tack-web/.prettierrc",
+  "prettier.ignorePath": "tack-web/.prettierignore",
+  "prettier.prettierPath": "tack-web/node_modules/prettier",
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  }
+}
