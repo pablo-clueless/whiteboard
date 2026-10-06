@@ -1,13 +1,12 @@
 "use client";
 
+import type { WebsocketProvider } from "y-websocket";
 import { useEffect, useState } from "react";
 import { Layer, Stage } from "react-konva";
-import type { WebsocketProvider } from "y-websocket";
 
-import { useEditorStore } from "@/stores/editor";
-
-import type { BoardDoc } from "./sync/board-doc";
 import { useBoard, useConnectionStatus, usePeerCount } from "./sync/useBoard";
+import { useEditorStore } from "@/stores/editor";
+import type { BoardDoc } from "./sync/board-doc";
 
 const USER_COLORS = ["#e5484d", "#f76b15", "#ffc53d", "#46a758", "#0090ff", "#8e4ec6", "#d6409f"];
 
