@@ -1,6 +1,8 @@
 //! The room actor: owns a board's `yrs::Doc` and awareness, and fans out updates.
 //!
-//! In-memory only for now. TODO(M2): load from / persist to Postgres.
+//! The board is loaded from Postgres when the room opens. Every applied update is handed to the
+//! persister; every COMPACT_AFTER updates (and when the room closes) the full doc state is saved
+//! as a snapshot so loading stays fast.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -22,10 +24,15 @@ use yrs::{
     },
 };
 
-use super::{BoardId, ConnId, Role, RoomMsg, RoomRegistry};
+use super::{BoardId, ConnId, Role, RoomMsg, RoomRegistry, persist::Persister};
+use crate::db;
 
-/// How long an empty room stays alive before shutting down.
+/// How long an empty room stays alive before saving and shutting down.
 const IDLE_SHUTDOWN: Duration = Duration::from_secs(60);
+/// Updates since the last snapshot before the room writes a new one.
+const COMPACT_AFTER: usize = 500;
+/// Boards stop accepting edits past roughly this size (encoded state plus updates since).
+const MAX_DOC_BYTES: usize = 20 * 1024 * 1024;
 
 struct Client {
     role: Role,
@@ -38,11 +45,56 @@ struct Room {
     board_id: BoardId,
     awareness: Awareness,
     clients: HashMap<ConnId, Client>,
+    persister: Persister,
+    updates_since_snapshot: usize,
+    /// Approximate encoded size: last snapshot plus every update applied since.
+    doc_bytes: usize,
 }
 
 pub(super) async fn run(board_id: BoardId, mut rx: mpsc::Receiver<RoomMsg>, registry: RoomRegistry) {
-    tracing::info!(%board_id, "room opened");
-    let mut room = Room { board_id, awareness: Awareness::new(Doc::new()), clients: HashMap::new() };
+    let doc = Doc::new();
+    let stored = match db::load_doc(&registry.pool, board_id).await {
+        Ok(stored) => stored,
+        Err(err) => {
+            // Refuse joins rather than serve an empty board that would then overwrite nothing
+            // but confuse everyone. Clients retry with backoff.
+            tracing::error!(%board_id, %err, "failed to load board; closing room");
+            rx.close();
+            registry.remove_closed(board_id);
+            return;
+        }
+    };
+    let mut doc_bytes = 0;
+    {
+        let mut txn = doc.transact_mut();
+        for bytes in stored.snapshot.iter().chain(&stored.updates) {
+            doc_bytes += bytes.len();
+            match Update::decode_v1(bytes) {
+                Ok(update) => {
+                    if let Err(err) = txn.apply_update(update) {
+                        tracing::error!(%board_id, %err, "stored update failed to apply");
+                    }
+                }
+                Err(err) => tracing::error!(%board_id, %err, "stored update failed to decode"),
+            }
+        }
+    }
+    tracing::info!(
+        %board_id,
+        snapshot = stored.snapshot.is_some(),
+        updates = stored.updates.len(),
+        bytes = doc_bytes,
+        "room opened"
+    );
+
+    let mut room = Room {
+        board_id,
+        awareness: Awareness::new(doc),
+        clients: HashMap::new(),
+        persister: Persister::spawn(registry.pool.clone(), board_id),
+        updates_since_snapshot: stored.updates.len(),
+        doc_bytes,
+    };
     let mut idle_since = Some(Instant::now());
 
     loop {
@@ -59,6 +111,11 @@ pub(super) async fn run(board_id: BoardId, mut rx: mpsc::Receiver<RoomMsg>, regi
             RoomMsg::Join { conn, role, tx } => room.join(conn, role, tx),
             RoomMsg::Message { conn, data } => room.handle(conn, &data),
             RoomMsg::Leave { conn } => room.leave(conn),
+            RoomMsg::DisconnectAll => {
+                let conns: Vec<_> = room.clients.keys().copied().collect();
+                tracing::info!(%board_id, count = conns.len(), "disconnecting everyone");
+                conns.into_iter().for_each(|c| room.leave(c));
+            }
         }
         idle_since = match (room.clients.is_empty(), idle_since) {
             (true, None) => Some(Instant::now()),
@@ -67,12 +124,16 @@ pub(super) async fn run(board_id: BoardId, mut rx: mpsc::Receiver<RoomMsg>, regi
         };
     }
 
-    // Stop accepting messages, then unregister so the next join spawns a fresh actor.
+    // Stop accepting messages and save everything before unregistering, so the next actor for
+    // this board loads the final state.
     rx.close();
+    if room.updates_since_snapshot > 0 {
+        room.snapshot();
+    }
+    room.persister.close().await;
     registry.remove_closed(board_id);
     tracing::info!(%board_id, "room closed");
 }
-
 impl Room {
     fn join(&mut self, conn: ConnId, role: Role, tx: mpsc::Sender<Bytes>) {
         // Sync step 1 + current awareness, so the client sends what we're missing.
@@ -137,6 +198,12 @@ impl Room {
     }
 
     fn apply_update(&mut self, conn: ConnId, raw: Vec<u8>) {
+        if self.doc_bytes + raw.len() > MAX_DOC_BYTES {
+            // The sender keeps its change locally and stays out of sync with the room for it.
+            // TODO: tell the client the board is full instead of failing silently.
+            tracing::warn!(board_id = %self.board_id, %conn, bytes = self.doc_bytes, "board full; update dropped");
+            return;
+        }
         let update = match Update::decode_v1(&raw) {
             Ok(update) => update,
             Err(err) => {
@@ -148,11 +215,45 @@ impl Room {
             tracing::warn!(board_id = %self.board_id, %conn, %err, "failed to apply update");
             return;
         }
-        // TODO(M2): append to the persistence buffer.
+        self.doc_bytes += raw.len();
+        self.updates_since_snapshot += 1;
+        self.persister.update(raw.clone());
         self.broadcast(Some(conn), &Message::Sync(SyncMessage::Update(raw)));
+        if self.updates_since_snapshot >= COMPACT_AFTER {
+            self.snapshot();
+        }
     }
 
-    fn apply_awareness(&mut self, conn: ConnId, update: AwarenessUpdate) {
+    /// Hands the full doc state to the persister, which folds stored updates into it.
+    fn snapshot(&mut self) {
+        let state = self.awareness.doc().transact().encode_state_as_update_v1(&StateVector::default());
+        self.doc_bytes = state.len();
+        self.updates_since_snapshot = 0;
+        self.persister.snapshot(state);
+    }
+
+    fn apply_awareness(&mut self, conn: ConnId, mut update: AwarenessUpdate) {
+        // When a connection drops we announce its clients as gone at clock + 1. If one reconnects
+        // it re-announces at its old clock, which everyone (us included) would ignore as stale.
+        // Stamp it past the removal, and echo that back so the client's own clock catches up.
+        let mut restamped = false;
+        for (&id, entry) in update.clients.iter_mut() {
+            if &*entry.json == "null" {
+                continue;
+            }
+            let removed = self.awareness.state::<serde_json::Value>(id).is_none();
+            if let Some((clock, _)) = self.awareness.meta(id)
+                && removed
+                && entry.clock <= clock
+            {
+                entry.clock = clock + 1;
+                restamped = true;
+            }
+        }
+        if restamped {
+            self.send_to(conn, &Message::Awareness(update.clone()));
+        }
+
         if let Err(err) = self.awareness.apply_update(update.clone()) {
             tracing::warn!(board_id = %self.board_id, %conn, %err, "bad awareness update");
             return;

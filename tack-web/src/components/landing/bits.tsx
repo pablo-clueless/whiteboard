@@ -3,7 +3,11 @@
 import { ArrowUpRight } from "lucide-react";
 import { MotionConfig } from "motion/react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { cn } from "cn";
+
+import { api } from "@/lib/api";
+import { rememberLink } from "@/lib/board-links";
 
 /** Honours the OS "reduce motion" setting for every animation on the page. */
 export function MotionRoot({ children }: { children: React.ReactNode }) {
@@ -35,7 +39,7 @@ export function Logo({ className }: { className?: string }) {
   );
 }
 
-/** Opens a new board. TODO(M2): POST /api/boards and carry the edit token. */
+/** Creates a board, keeps its share links in this browser, and opens it. */
 export function NewBoardButton({
   className,
   label = "New board",
@@ -46,12 +50,28 @@ export function NewBoardButton({
   tone?: "primary" | "light";
 }) {
   const router = useRouter();
+  const [state, setState] = useState<"idle" | "creating" | "failed">("idle");
+
+  const create = async () => {
+    setState("creating");
+    try {
+      const links = await api.createBoard();
+      rememberLink(links.boardId, "edit", links.editToken);
+      rememberLink(links.boardId, "view", links.viewToken);
+      router.push(`/b/${links.boardId}`);
+    } catch {
+      setState("failed");
+    }
+  };
+
   return (
     <button
       type="button"
-      onClick={() => router.push(`/b/${crypto.randomUUID()}`)}
+      onClick={create}
+      disabled={state === "creating"}
+      aria-live="polite"
       className={cn(
-        "group inline-flex h-12 items-center gap-2 rounded-full pr-2 pl-6 text-[15px] font-semibold transition-colors",
+        "group inline-flex h-12 items-center gap-2 rounded-full pr-2 pl-6 text-[15px] font-semibold transition-colors disabled:opacity-80",
         "focus-visible:ring-primary/50 outline-none focus-visible:ring-4",
         tone === "primary"
           ? "bg-primary text-white hover:bg-[#e0600a]"
@@ -59,7 +79,11 @@ export function NewBoardButton({
         className,
       )}
     >
-      {label}
+      {state === "creating"
+        ? "Creating board…"
+        : state === "failed"
+          ? "Couldn't create a board. Try again"
+          : label}
       <span
         className={cn(
           "grid size-8 place-items-center rounded-full transition-transform group-hover:rotate-45",

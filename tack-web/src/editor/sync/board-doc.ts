@@ -27,11 +27,20 @@ export function createBoardDoc(doc = new Y.Doc()): BoardDoc {
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
-export function connectBoard(boardId: string, board: BoardDoc, { connect = true } = {}) {
+export function connectBoard(
+  boardId: string,
+  board: BoardDoc,
+  { token, connect = true }: { token: string; connect?: boolean },
+) {
   return new WebsocketProvider(env.wsUrl, boardId, board.doc, {
     connect,
     // Tabs must sync through the server, not BroadcastChannel, or we'd never exercise the wire.
     disableBc: true,
-    // TODO(M2): pass the share token: params: { token }
+    params: { token },
   });
+}
+
+/** Points the provider at a new token; it takes effect on the next (re)connect. */
+export function setProviderToken(provider: WebsocketProvider, token: string) {
+  provider.params = { token };
 }

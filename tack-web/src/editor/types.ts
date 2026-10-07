@@ -1,4 +1,7 @@
+import type { LucideIcon } from "lucide-react";
 import type { JSX } from "react";
+
+import type { Editor } from "./editor-core";
 
 export type Vec = { x: number; y: number };
 export type Box = { x: number; y: number; w: number; h: number };
@@ -36,6 +39,10 @@ export type ShapeDef<P = unknown, T extends string = string> = {
   version: number;
   defaultProps: P;
   validate: (props: unknown) => P;
+  /**
+   * Draws the shape in its own local space: (0, 0) is the shape's top-left. The editor applies
+   * x, y and rotation.
+   */
   Component: (p: { shape: Shape<P, T>; isSelected: boolean }) => JSX.Element;
   getBounds: (shape: Shape<P, T>) => Box;
   /** Defaults to a bounds check. Thin shapes must implement it with a screen-space tolerance. */
@@ -54,6 +61,8 @@ export type ToolEvent = {
   /** Pointer position in screen space. */
   screen: Vec;
   pressure: number;
+  /** "mouse", "pen" or "touch". Only pens report real pressure. */
+  pointerType: string;
   shiftKey: boolean;
   altKey: boolean;
   metaKey: boolean;
@@ -61,14 +70,26 @@ export type ToolEvent = {
   targetId: string | null;
 };
 
-/** Each tool is a small state machine driven by pointer and key events. */
+/**
+ * Each tool is a small state machine driven by pointer and key events. Handlers get the editor so
+ * tools never reach into Yjs or Konva directly.
+ */
 export type Tool = {
   id: string;
   label: string;
+  icon: LucideIcon;
+  /** Single key that selects the tool, e.g. "r". */
+  shortcut?: string;
+  /**
+   * Tools with the same group share one toolbar button with a menu, which shows the last one
+   * used. Ungrouped tools get their own button.
+   */
+  group?: string;
   cursor: string;
-  onPointerDown?: (e: ToolEvent) => void;
-  onPointerMove?: (e: ToolEvent) => void;
-  onPointerUp?: (e: ToolEvent) => void;
-  onKeyDown?: (e: KeyboardEvent) => void;
-  onCancel?: () => void;
+  onPointerDown?: (e: ToolEvent, editor: Editor) => void;
+  onPointerMove?: (e: ToolEvent, editor: Editor) => void;
+  onPointerUp?: (e: ToolEvent, editor: Editor) => void;
+  onKeyDown?: (e: KeyboardEvent, editor: Editor) => void;
+  /** Escape, or switching tools mid-gesture. Undo any half-finished work. */
+  onCancel?: (editor: Editor) => void;
 };

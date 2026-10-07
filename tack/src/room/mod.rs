@@ -1,6 +1,7 @@
 //! One actor per open board. Connections talk to it through a [`RoomHandle`].
 
 mod actor;
+mod persist;
 
 use std::{
     fmt,
@@ -12,8 +13,11 @@ use std::{
 
 use bytes::Bytes;
 use dashmap::DashMap;
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+
+pub use crate::auth::Role;
 
 pub type BoardId = Uuid;
 
@@ -22,13 +26,6 @@ pub const OUTGOING_QUEUE: usize = 256;
 
 /// Inbox length of a room actor.
 const ROOM_INBOX: usize = 1024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    Edit,
-    #[allow(dead_code)] // TODO(M2): issued by view share tokens
-    View,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnId(u64);
@@ -50,6 +47,9 @@ pub(crate) enum RoomMsg {
     Join { conn: ConnId, role: Role, tx: mpsc::Sender<Bytes> },
     Message { conn: ConnId, data: Bytes },
     Leave { conn: ConnId },
+    /// Disconnect everyone, e.g. after share links are rotated. They must reconnect with a valid
+    /// token.
+    DisconnectAll,
 }
 
 #[derive(Clone)]
@@ -68,13 +68,18 @@ impl RoomHandle {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RoomRegistry {
     rooms: Arc<DashMap<BoardId, RoomHandle>>,
+    pool: PgPool,
 }
 
 impl RoomRegistry {
-    /// Joins the board's room, starting its actor if it isn't running.
+    pub fn new(pool: PgPool) -> Self {
+        Self { rooms: Arc::default(), pool }
+    }
+
+    /// Joins the board's room, starting its actor (and loading the board) if it isn't running.
     pub async fn join(
         &self,
         board_id: BoardId,
@@ -95,6 +100,14 @@ impl RoomRegistry {
             self.remove_closed(board_id);
         }
         None
+    }
+
+    /// Disconnects everyone in the board's room, if it's open.
+    pub async fn disconnect_all(&self, board_id: BoardId) {
+        let handle = self.rooms.get(&board_id).map(|h| h.clone());
+        if let Some(handle) = handle {
+            let _ = handle.tx.send(RoomMsg::DisconnectAll).await;
+        }
     }
 
     fn spawn(&self, board_id: BoardId) -> RoomHandle {

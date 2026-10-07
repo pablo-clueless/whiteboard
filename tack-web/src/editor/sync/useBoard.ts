@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { WebsocketProvider } from "y-websocket";
 
 import { type ConnectionStatus, connectBoard, createBoardDoc } from "./board-doc";
@@ -9,10 +9,10 @@ import { type ConnectionStatus, connectBoard, createBoardDoc } from "./board-doc
  * Owns the board's Y.Doc and provider for the lifetime of the editor. The caller must remount
  * (key by board id) to switch boards.
  */
-export function useBoard(boardId: string) {
+export function useBoard(boardId: string, token: string) {
   const [conn] = useState(() => {
     const board = createBoardDoc();
-    const provider = connectBoard(boardId, board, { connect: false });
+    const provider = connectBoard(boardId, board, { token, connect: false });
     return { board, provider };
   });
 
@@ -44,6 +44,22 @@ export function useConnectionStatus(provider: WebsocketProvider): {
     () => provider.synced,
   );
   return { status, synced };
+}
+
+/**
+ * Calls onClosed when the server closes the connection for good (a 44xx code: the link was
+ * reset, or the board is gone). y-websocket stops reconnecting in that case.
+ */
+export function useOnPermanentClose(provider: WebsocketProvider, onClosed: () => void) {
+  const latest = useRef(onClosed);
+  useEffect(() => {
+    latest.current = onClosed;
+  });
+  useEffect(() => {
+    const handler = () => latest.current();
+    provider.on("closed", handler);
+    return () => provider.off("closed", handler);
+  }, [provider]);
 }
 
 /** Number of clients on this board, including us. */

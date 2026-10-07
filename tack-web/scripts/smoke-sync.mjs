@@ -4,13 +4,17 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
 const URL = process.env.TACK_WS_URL ?? "ws://localhost:8080/ws/boards";
+const API = process.env.TACK_API_URL ?? "http://localhost:8080";
 const ORIGIN = process.env.TACK_ORIGIN ?? "http://localhost:3000";
-const board = crypto.randomUUID();
+const { boardId: board, editToken } = await fetch(`${API}/api/boards`, { method: "POST" }).then((r) =>
+  r.json(),
+);
 
 // Node's WebSocket doesn't send Origin like a browser does; add it.
 class OriginWebSocket extends WebSocket {
   constructor(url, protocols) {
-    super(url, { protocols, headers: { origin: ORIGIN } });
+    // Passing `protocols: undefined` makes Node's WebSocket misreport server close codes as 1006.
+    super(url, { ...(protocols?.length ? { protocols } : {}), headers: { origin: ORIGIN } });
   }
 }
 
@@ -19,6 +23,7 @@ function client() {
   const provider = new WebsocketProvider(URL, board, doc, {
     WebSocketPolyfill: OriginWebSocket,
     disableBc: true,
+    params: { token: editToken },
   });
   return { doc, provider, shapes: doc.getMap("shapes") };
 }

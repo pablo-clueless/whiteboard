@@ -2,10 +2,11 @@
 
 import dynamic from "next/dynamic";
 
-// Konva needs `window`, so the editor never renders on the server.
-const Editor = dynamic(() => import("./Editor"), { ssr: false });
+// Konva needs `window`, and the share link lives in the URL fragment, so the board never renders
+// on the server.
+const BoardGate = dynamic(() => import("./BoardGate"), { ssr: false });
 
 export function EditorLoader({ boardId }: { boardId: string }) {
   // Keyed so switching boards gets a fresh Y.Doc and provider.
-  return <Editor key={boardId} boardId={boardId} />;
+  return <BoardGate key={boardId} boardId={boardId} />;
 }
