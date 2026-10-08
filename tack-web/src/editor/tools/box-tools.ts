@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 
 import { boxFromPoints, distance } from "../geometry";
+import type { Editor } from "../editor-core";
+import { SNAP_DISTANCE, snapPoint } from "../snapping";
 import type { Box, Tool, Vec } from "../types";
 
 /** Screen pixels the pointer must travel before a press draws instead of placing a default. */
@@ -31,7 +33,18 @@ export function boxTool(opts: {
   props?: Record<string, unknown>;
   group?: string;
 }): Tool {
-  let drawing: { start: Vec; screen: Vec; id: string | null } | null = null;
+  let drawing: { start: Vec; screen: Vec; id: string | null; targets: Box[] } | null = null;
+
+  /** Snaps a corner to other shapes' edges and centres, unless Alt is held. */
+  const snap = (editor: Editor, p: Vec, alt: boolean, targets: Box[]) => {
+    if (alt) {
+      editor.ui.setGuides([]);
+      return p;
+    }
+    const { point, guides } = snapPoint(p, targets, SNAP_DISTANCE / editor.ui.camera.zoom);
+    editor.ui.setGuides(guides);
+    return point;
+  };
 
   const boxFor = (start: Vec, point: Vec, square: boolean): Box => {
     if (!square) return boxFromPoints(start, point);
@@ -52,7 +65,13 @@ export function boxTool(opts: {
 
     onPointerDown(e, editor) {
       editor.startGesture();
-      drawing = { start: e.point, screen: e.screen, id: null };
+      const targets = editor.snapTargets([]);
+      drawing = {
+        start: snap(editor, e.point, e.altKey, targets),
+        screen: e.screen,
+        id: null,
+        targets,
+      };
     },
 
     onPointerMove(e, editor) {
@@ -70,7 +89,9 @@ export function boxTool(opts: {
       const id = drawing.id;
       const shape = editor.getShape(id);
       if (!shape) return;
-      const b = boxFor(drawing.start, e.point, e.shiftKey);
+      // Shift keeps the shape square, which snapping the corner would undo.
+      const corner = e.shiftKey ? e.point : snap(editor, e.point, e.altKey, drawing.targets);
+      const b = boxFor(drawing.start, corner, e.shiftKey);
       editor.writeEachFrame(() =>
         editor.updateShapes({
           [id]: {
@@ -84,6 +105,7 @@ export function boxTool(opts: {
 
     onPointerUp(e, editor) {
       if (!drawing) return;
+      editor.ui.setGuides([]);
       let id = drawing.id;
       if (!id) {
         // A click: drop a default-sized shape centred on the pointer.
@@ -104,6 +126,7 @@ export function boxTool(opts: {
     },
 
     onCancel(editor) {
+      editor.ui.setGuides([]);
       if (drawing?.id) editor.deleteShapes([drawing.id]);
       if (drawing) editor.endGesture();
       drawing = null;

@@ -16,6 +16,9 @@ import {
   Minus,
   Plus,
   Trash2,
+  Lock,
+  Group,
+  Ungroup,
 } from "lucide-react";
 
 import type { Editor, ShapeKnobs, StyleProps, ZOrderMove } from "./editor-core";
@@ -449,6 +452,28 @@ export function StylePanel({ editor }: { editor: Editor }) {
   const first = useShape(editor, selectedIds[0] ?? "");
   if (!selectedIds.length || !first) return null;
 
+  // Locked shapes can't be styled; say so rather than show controls that do nothing.
+  if (selectedIds.every((id) => editor.getShape(id)?.locked)) {
+    return (
+      <aside
+        aria-label="Selection style"
+        className="absolute top-3 left-3 flex w-59 items-center gap-2.5 rounded-2xl border bg-white p-3 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
+      >
+        <Lock className="text-ink/50 size-4 shrink-0" />
+        <p className="text-ink/70 flex-1 text-xs">
+          {selectedIds.length === 1 ? "This shape is locked." : "These shapes are locked."}
+        </p>
+        <button
+          type="button"
+          onClick={() => editor.setLocked(selectedIds, false)}
+          className="text-ink focus-visible:ring-primary/40 h-7 rounded-lg border px-2.5 text-xs font-semibold outline-none hover:bg-[#f6f6f7] focus-visible:ring-3"
+        >
+          Unlock
+        </button>
+      </aside>
+    );
+  }
+
   // Validated, so shapes saved before a prop existed still show its control (at the default).
   const def = shapeRegistry.get(first.type);
   let props: Editable;
@@ -469,6 +494,30 @@ export function StylePanel({ editor }: { editor: Editor }) {
       key={first.id}
       className="absolute top-3 left-3 max-h-[calc(100dvh-96px)] w-59 space-y-4 overflow-y-auto rounded-2xl border bg-white p-3.5 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
     >
+      {def?.variants && has("variant") && (
+        <Section title="Look">
+          <div
+            className="grid gap-1 rounded-xl bg-[#f3f3f5] p-1"
+            style={{ gridTemplateColumns: `repeat(${def.variants.length}, minmax(0, 1fr))` }}
+          >
+            {def.variants.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                aria-pressed={props.variant === v.id}
+                onClick={() => set({ variant: v.id, ...(v.size ?? {}) })}
+                className={cn(
+                  "focus-visible:ring-primary/40 text-ink h-7 rounded-lg text-xs font-semibold outline-none focus-visible:ring-3",
+                  props.variant === v.id ? "bg-white shadow-sm" : "text-ink/50 hover:bg-white/60",
+                )}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {has("label") && (
         <Section title="Label">
           <TextField
@@ -857,6 +906,32 @@ export function StylePanel({ editor }: { editor: Editor }) {
               <Icon className="size-4" />
             </button>
           ))}
+          {editor.unitCount(selectedIds) > 1 && (
+            <button
+              type="button"
+              title="Group (Ctrl/⌘ G)"
+              aria-label="Group"
+              onClick={() =>
+                editor.group(selectedIds) && editor.select(editor.expandToUnits(selectedIds))
+              }
+              className="text-ink/70 focus-visible:ring-primary/40 grid size-8 place-items-center rounded-lg outline-none hover:bg-[#f1f1f3] focus-visible:ring-3"
+            >
+              <Group className="size-4" />
+            </button>
+          )}
+          {editor.groupsIn(selectedIds).length > 0 && (
+            <button
+              type="button"
+              title="Ungroup (Ctrl/⌘ Shift G)"
+              aria-label="Ungroup"
+              onClick={() =>
+                editor.ungroup(selectedIds) && editor.select(editor.expandToUnits(selectedIds))
+              }
+              className="text-ink/70 focus-visible:ring-primary/40 grid size-8 place-items-center rounded-lg outline-none hover:bg-[#f1f1f3] focus-visible:ring-3"
+            >
+              <Ungroup className="size-4" />
+            </button>
+          )}
           <span className="mx-0.5 h-5 w-px bg-[#e6e6ea]" aria-hidden />
           <button
             type="button"
@@ -864,7 +939,7 @@ export function StylePanel({ editor }: { editor: Editor }) {
             aria-label="Delete"
             onClick={() => {
               editor.markHistory();
-              editor.deleteShapes(selectedIds);
+              editor.deleteShapes(editor.unlocked(selectedIds));
             }}
             className="text-destructive focus-visible:ring-primary/40 grid size-8 place-items-center rounded-lg outline-none hover:bg-red-50 focus-visible:ring-3"
           >

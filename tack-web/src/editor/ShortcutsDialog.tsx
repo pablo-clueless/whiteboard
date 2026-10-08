@@ -40,6 +40,14 @@ const EDIT: Row[] = [
     ],
   },
   { label: "Duplicate", keys: [[MOD, "D"]] },
+  {
+    label: "Group · Ungroup",
+    keys: [
+      [MOD, "G"],
+      [MOD, "Shift", "G"],
+    ],
+  },
+  { label: "Edit inside a group", keys: [["Double-click"]] },
   { label: "Select all", keys: [[MOD, "A"]] },
   { label: "Delete", keys: [["Delete"], ["Backspace"]] },
   { label: "Nudge (10 with Shift)", keys: [["←"], ["↑"], ["→"], ["↓"]] },
@@ -51,7 +59,7 @@ const EDIT: Row[] = [
       [MOD, "["],
     ],
   },
-  { label: "Deselect, back to Select", keys: [["Esc"]] },
+  { label: "Deselect, or leave a group", keys: [["Esc"]] },
 ];
 
 const VIEW: Row[] = [

@@ -59,9 +59,9 @@ export const eraserTool: Tool = {
   },
 };
 
-/** Locked shapes are skipped. */
+/** Grouped shapes go with their whole group; locked shapes are skipped. */
 function erasable(editor: Parameters<NonNullable<Tool["onCancel"]>>[0], ids: Set<string>) {
-  return [...ids].filter((id) => {
+  return editor.expandToUnits([...ids]).filter((id) => {
     const shape = editor.getShape(id);
     return shape && !shape.locked;
   });
