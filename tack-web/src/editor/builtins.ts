@@ -1,4 +1,4 @@
-import { ellipseTool, polygonTools, rectTool, starTool } from "./tools/box-tools";
+import { ellipseTool, frameTool, polygonTools, rectTool, starTool } from "./tools/box-tools";
 import { polygonShape, starShape } from "./shapes/polygon";
 import { arrowTool, lineTool } from "./tools/line-tools";
 import { ellipseShape, rectShape } from "./shapes/box";
@@ -6,13 +6,18 @@ import { arrowShape, lineShape } from "./shapes/line";
 import { freehandShape } from "./shapes/freehand";
 import { shapeRegistry } from "./shapes/registry";
 import { toolRegistry } from "./tools/registry";
+import { eraserTool } from "./tools/eraser";
+import { frameShape } from "./shapes/frame";
+import { imageShape } from "./shapes/image";
 import { selectTool } from "./tools/select";
+import { imageTool } from "./tools/image";
 import { textShape } from "./shapes/text";
-import { handTool } from "./tools/hand";
 import { drawTool } from "./tools/draw";
+import { handTool } from "./tools/hand";
 import { textTool } from "./tools/text";
 
 // Built-ins register exactly like custom shapes and tools do. Toolbar order is registration order.
+shapeRegistry.register(frameShape);
 shapeRegistry.register(rectShape);
 shapeRegistry.register(ellipseShape);
 shapeRegistry.register(polygonShape);
@@ -21,9 +26,11 @@ shapeRegistry.register(lineShape);
 shapeRegistry.register(arrowShape);
 shapeRegistry.register(freehandShape);
 shapeRegistry.register(textShape);
+shapeRegistry.register(imageShape);
 
 toolRegistry.register(selectTool);
 toolRegistry.register(handTool);
+toolRegistry.register(frameTool);
 toolRegistry.register(rectTool);
 toolRegistry.register(ellipseTool);
 polygonTools.forEach((tool) => toolRegistry.register(tool));
@@ -32,3 +39,5 @@ toolRegistry.register(lineTool);
 toolRegistry.register(arrowTool);
 toolRegistry.register(drawTool);
 toolRegistry.register(textTool);
+toolRegistry.register(imageTool);
+toolRegistry.register(eraserTool);

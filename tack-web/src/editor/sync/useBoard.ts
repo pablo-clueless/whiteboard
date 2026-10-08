@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { WebsocketProvider } from "y-websocket";
 
-import { type ConnectionStatus, connectBoard, createBoardDoc } from "./board-doc";
+import {
+  BOARD_FULL_EVENT,
+  type BoardFullEvents,
+  type ConnectionStatus,
+  connectBoard,
+  createBoardDoc,
+} from "./board-doc";
 
 /**
  * Owns the board's Y.Doc and provider for the lifetime of the editor. The caller must remount
@@ -59,6 +65,23 @@ export function useOnPermanentClose(provider: WebsocketProvider, onClosed: () =>
     const handler = () => latest.current();
     provider.on("closed", handler);
     return () => provider.off("closed", handler);
+  }, [provider]);
+}
+
+/**
+ * Calls onFull when the server says the board has reached its size limit and is dropping this
+ * client's edits.
+ */
+export function useOnBoardFull(provider: WebsocketProvider, onFull: () => void) {
+  const latest = useRef(onFull);
+  useEffect(() => {
+    latest.current = onFull;
+  });
+  useEffect(() => {
+    const handler = () => latest.current();
+    const events = provider as unknown as BoardFullEvents;
+    events.on(BOARD_FULL_EVENT, handler);
+    return () => events.off(BOARD_FULL_EVENT, handler);
   }, [provider]);
 }
 

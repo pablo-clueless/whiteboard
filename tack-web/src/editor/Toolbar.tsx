@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronUp, Maximize, Minus, Plus, Redo2, RotateCcw, Undo2 } from "lucide-react";
+import { ChevronUp, Keyboard, Maximize, Minus, Plus, Redo2, RotateCcw, Undo2 } from "lucide-react";
 import { cn } from "cn";
 
 import { useEditorStore, zoomAt } from "@/stores/editor";
@@ -249,6 +249,12 @@ export function ZoomControls({ editor }: { editor: Editor }) {
       aria-label="Zoom"
       className="absolute right-4 bottom-4 flex items-center gap-0.5 rounded-2xl border bg-white p-1 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
     >
+      <IconButton
+        label="Keyboard shortcuts (?)"
+        onClick={() => useEditorStore.getState().setShortcutsOpen(true)}
+      >
+        <Keyboard className="size-4" />
+      </IconButton>
       <IconButton label="Centre on screen" onClick={centreContent}>
         <Maximize className="size-4" />
       </IconButton>

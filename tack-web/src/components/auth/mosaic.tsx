@@ -1,7 +1,7 @@
 "use client";
 
-import { motion } from "motion/react";
 import { type ReactNode, useEffect, useState } from "react";
+import { motion } from "motion/react";
 
 // Tack's palette, as flat geometric tiles.
 const INK = "#0e0e10";

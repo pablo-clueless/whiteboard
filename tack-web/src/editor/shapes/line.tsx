@@ -2,8 +2,8 @@ import { Group, Line, Path } from "react-konva";
 
 import { type Axis, axisBetween, elbowPoints, roundedPathData } from "../routing";
 import type { Box, Shape, ShapeDef, Vec } from "../types";
-
 import { clamp, MAX_STROKE_WIDTH, num, str } from "./box";
+import { esc, paint, points } from "../svg";
 
 /** Shared by lines and arrows. `path` is flat [x0, y0, x1, y1] in the shape's own space. */
 export type LineProps = {
@@ -81,6 +81,8 @@ export const lineShape: ShapeDef<LineProps, "line"> = {
   validate: validateLine,
   getBounds: (s) => pathBounds(s, s.props.strokeWidth / 2),
   getHandles: endHandles,
+  toSvg: ({ props: p }) =>
+    `<polyline points="${points(p.path)}" ${paint(null, p.stroke, p.strokeWidth)}/>`,
   Component: ({ shape }) => {
     const p = shape.props;
     return (
@@ -125,11 +127,28 @@ function headPoints(from: Vec, tip: Vec, size: number): number[] {
   return [tip.x, tip.y, bx - uy * half, by + ux * half, bx + uy * half, by - ux * half];
 }
 
-/** The polyline an arrow draws: straight between its ends, or an elbow route. */
+/** The trimmed line and the arrowhead triangles an arrow draws, in its own space. */
+function arrowGeometry(p: ArrowProps): { line: number[]; heads: number[][] } {
+  const head = arrowHeadSize(p.strokeWidth);
+  const route = arrowRoute(p);
+  const len = route.length;
+  const at = (i: number) => ({ x: route[i], y: route[i + 1] });
+  const heads: number[][] = [];
+  if (p.arrowEnd) heads.push(headPoints(at(len - 4), at(len - 2), head));
+  if (p.arrowStart) heads.push(headPoints(at(2), at(0), head));
+  const line = trimEnds(route, p.arrowStart ? head * 0.8 : 0, p.arrowEnd ? head * 0.8 : 0);
+  return { line, heads };
+}
+
+/**
+ * The polyline an arrow draws. Arrows the editor has routed store their whole route in `path`;
+ * a bare two-point path (mid-drag, or from before routing) is straight, or one elbow.
+ */
 export function arrowRoute(p: ArrowProps): number[] {
+  if (p.route === "straight" || p.path.length > 4) return p.path;
   const s = { x: p.path[0], y: p.path[1] };
-  const e = { x: p.path[p.path.length - 2], y: p.path[p.path.length - 1] };
-  return p.route === "straight" ? p.path : elbowPoints(s, e, p.axis ?? axisBetween(s, e));
+  const e = { x: p.path[2], y: p.path[3] };
+  return elbowPoints(s, e, p.axis ?? axisBetween(s, e));
 }
 
 export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
@@ -146,17 +165,22 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
       axis: p.axis === "h" || p.axis === "v" ? p.axis : null,
     };
   },
-  // An elbow route never leaves the box spanned by its two ends, so the ends' bounds cover it.
+  // `path` holds every corner of a routed arrow, so its bounds cover the route.
   getBounds: (s) => pathBounds(s, arrowHeadSize(s.props.strokeWidth)),
   getHandles: endHandles,
+  toSvg: ({ props: p }) => {
+    const { line, heads } = arrowGeometry(p);
+    const body = `<path d="${esc(roundedPathData(line, ELBOW_CORNER))}" ${paint(null, p.stroke, p.strokeWidth)}/>`;
+    return (
+      body +
+      heads
+        .map((h) => `<polygon points="${points(h)}" ${paint(p.stroke, p.stroke, p.strokeWidth)}/>`)
+        .join("")
+    );
+  },
   Component: ({ shape }) => {
     const p = shape.props;
-    const head = arrowHeadSize(p.strokeWidth);
-    const route = arrowRoute(p);
-    const n = route.length;
-    // Stop the line at the base of each head so thick strokes don't poke past the tip.
-    const line = trimEnds(route, p.arrowStart ? head * 0.8 : 0, p.arrowEnd ? head * 0.8 : 0);
-    const at = (i: number) => ({ x: route[i], y: route[i + 1] });
+    const { line, heads } = arrowGeometry(p);
     return (
       <Group>
         <Path
@@ -169,9 +193,10 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
           hitStrokeWidth={Math.max(HIT_WIDTH, p.strokeWidth)}
           perfectDrawEnabled={false}
         />
-        {p.arrowEnd && (
+        {heads.map((points, i) => (
           <Line
-            points={headPoints(at(n - 4), at(n - 2), head)}
+            key={i}
+            points={points}
             closed
             fill={p.stroke}
             stroke={p.stroke}
@@ -179,18 +204,7 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
             lineJoin="round"
             perfectDrawEnabled={false}
           />
-        )}
-        {p.arrowStart && (
-          <Line
-            points={headPoints(at(2), at(0), head)}
-            closed
-            fill={p.stroke}
-            stroke={p.stroke}
-            strokeWidth={p.strokeWidth}
-            lineJoin="round"
-            perfectDrawEnabled={false}
-          />
-        )}
+        ))}
       </Group>
     );
   },

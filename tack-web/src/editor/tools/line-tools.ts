@@ -1,9 +1,8 @@
 import { MoveUpRight, Slash } from "lucide-react";
 
-import { anchorFor } from "../bindings";
-import type { Editor } from "../editor-core";
+import type { Connection, Editor } from "../editor-core";
+import type { Tool, ToolEvent, Vec } from "../types";
 import { distance } from "../geometry";
-import type { Shape, Tool, Vec } from "../types";
 
 const DRAW_THRESHOLD = 4;
 /** Length of a line dropped with a click instead of a drag. */
@@ -18,8 +17,9 @@ function snapAngle(from: Vec, to: Vec): Vec {
 }
 
 /**
- * Drag from one point to another. Arrows attach to whatever shape they start or end on, and
- * stay attached when that shape moves.
+ * Drag from one point to another. Arrows connect to shapes at their connection points (the
+ * middle of each side): starting or ending near one snaps to it, and anywhere over a shape uses
+ * its nearest. Connected ends stay on those points when the shapes move.
  */
 function makeLineTool(opts: {
   id: string;
@@ -28,20 +28,13 @@ function makeLineTool(opts: {
   shortcut: string;
   shapeType: "line" | "arrow";
 }): Tool {
-  let drawing: { start: Vec; screen: Vec; id: string | null; startTarget: Shape | null } | null =
+  let drawing: { start: Vec; screen: Vec; id: string | null; from: Connection | null } | null =
     null;
   const binds = opts.shapeType === "arrow";
 
-  const attach = (
-    editor: Editor,
-    id: string,
-    terminal: "start" | "end",
-    target: Shape | null,
-    at: Vec,
-  ) => {
-    const anchor = target && anchorFor(target, at);
-    if (target && anchor) editor.setBinding(id, terminal, { toId: target.id, anchor });
-  };
+  /** Shows the connection points of the shape under the pointer, highlighting the one in use. */
+  const hint = (editor: Editor, c: Connection | null) =>
+    editor.ui.setConnect(c ? { shapeId: c.shapeId, port: c.port } : null);
 
   return {
     id: opts.id,
@@ -50,14 +43,14 @@ function makeLineTool(opts: {
     shortcut: opts.shortcut,
     cursor: "crosshair",
 
+    onHover(e, editor) {
+      if (binds) hint(editor, e && editor.connectionAt(e.point));
+    },
+
     onPointerDown(e, editor) {
       editor.startGesture();
-      drawing = {
-        start: e.point,
-        screen: e.screen,
-        id: null,
-        startTarget: binds ? editor.bindableShapeAt(e.point) : null,
-      };
+      const from = binds ? editor.connectionAt(e.point) : null;
+      drawing = { start: from?.point ?? e.point, screen: e.screen, id: null, from };
     },
 
     onPointerMove(e, editor) {
@@ -71,15 +64,33 @@ function makeLineTool(opts: {
           props: { path: [0, 0, 0, 0] },
         });
         editor.select([drawing.id]);
+        // Bind the start now, so the preview leaves its shape the way the result will.
+        if (drawing.from)
+          editor.setBinding(drawing.id, "start", {
+            toId: drawing.from.shapeId,
+            anchor: drawing.from.anchor,
+          });
       }
       const id = drawing.id;
-      const end = e.shiftKey ? snapAngle(drawing.start, e.point) : e.point;
-      const shape = editor.getShape(id);
-      if (!shape) return;
-      const path = [0, 0, end.x - drawing.start.x, end.y - drawing.start.y];
-      editor.writeEachFrame(() =>
-        editor.updateShapes({ [id]: { props: { ...(shape.props as object), path } } }),
-      );
+      const to = binds ? endConnection(editor, drawing, e.point, id) : null;
+      hint(editor, to);
+      const end = to?.point ?? (e.shiftKey ? snapAngle(drawing.start, e.point) : e.point);
+      editor.writeEachFrame(() => {
+        const shape = editor.getShape(id);
+        if (!shape) return;
+        editor.transact(() => {
+          editor.updateShapes({
+            [id]: {
+              props: {
+                ...(shape.props as object),
+                path: [0, 0, end.x - shape.x, end.y - shape.y],
+              },
+            },
+          });
+          // Route the preview as it will end up, from the (possibly bound) start.
+          if (binds) editor.rerouteArrow(id);
+        });
+      });
     },
 
     onPointerUp(e, editor) {
@@ -94,12 +105,10 @@ function makeLineTool(opts: {
           props: { path: [0, 0, CLICK_LENGTH, 0] },
         });
       } else if (binds) {
-        const end = e.shiftKey ? snapAngle(drawing.start, e.point) : e.point;
-        const endTarget = editor.bindableShapeAt(end, id);
-        attach(editor, id, "start", drawing.startTarget, drawing.start);
-        // An arrow from a shape to itself has no direction; leave the end free instead.
-        if (endTarget?.id !== drawing.startTarget?.id) attach(editor, id, "end", endTarget, end);
+        const to = endConnection(editor, drawing, e.point, id);
+        if (to) editor.setBinding(id, "end", { toId: to.shapeId, anchor: to.anchor });
       }
+      editor.ui.setConnect(null);
       editor.endGesture();
       editor.select([id]);
       editor.setTool("select");
@@ -109,9 +118,29 @@ function makeLineTool(opts: {
     onCancel(editor) {
       if (drawing?.id) editor.deleteShapes([drawing.id]);
       if (drawing) editor.endGesture();
+      editor.ui.setConnect(null);
       drawing = null;
     },
   };
+}
+
+/** Where the end would connect. An arrow from a shape to itself is left free instead. */
+function endConnection(
+  editor: Editor,
+  drawing: { from: Connection | null },
+  point: Vec,
+  arrowId: string,
+): Connection | null {
+  const to = editor.connectionAt(point, { excludeId: arrowId });
+  return to && to.shapeId !== drawing.from?.shapeId ? to : null;
+}
+
+/**
+ * Starts drawing an arrow from a connection point, for tools that hand a press over (the select
+ * tool, when a press lands on a shape's connection point).
+ */
+export function startArrowFrom(e: ToolEvent, editor: Editor) {
+  arrowTool.onPointerDown!(e, editor);
 }
 
 export const lineTool = makeLineTool({

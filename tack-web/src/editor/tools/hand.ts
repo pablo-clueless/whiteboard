@@ -1,7 +1,6 @@
 import { Hand } from "lucide-react";
 
 import type { Camera } from "@/stores/editor";
-
 import type { Tool, Vec } from "../types";
 
 let pan: { screen: Vec; camera: Camera } | null = null;

@@ -2,6 +2,7 @@ import { Ellipse, Rect } from "react-konva";
 
 import type { ResizeInfo, Shape, ShapeDef } from "../types";
 import { rotatedBounds } from "../geometry";
+import { n, paint } from "../svg";
 
 /** Props shared by the box-like shapes. TODO: generate from the Rust model via ts-rs. */
 export type BoxProps = {
@@ -45,14 +46,14 @@ export function validateBox(raw: unknown): BoxProps {
   };
 }
 
-export const boxBounds = (s: Shape<BoxProps>) =>
+export const boxBounds = (s: Shape<{ w: number; h: number }>) =>
   rotatedBounds(s.x, s.y, s.props.w, s.props.h, s.rotation);
 
-export function boxResize<P extends BoxProps, T extends string>(
+export function boxResize<P extends { w: number; h: number }, T extends string>(
   shape: Shape<P, T>,
   { scaleX, scaleY, initial }: ResizeInfo,
 ): Partial<Shape<P, T>> {
-  const start = initial.props as BoxProps;
+  const start = initial.props as { w: number; h: number };
   return {
     props: {
       ...shape.props,
@@ -69,7 +70,7 @@ const LEGACY_RADIUS = 10;
 
 export const rectShape: ShapeDef<RectProps, "rect"> = {
   type: "rect",
-  version: 1,
+  version: 2,
   defaultProps: { ...DEFAULT_BOX, radius: DEFAULT_RADIUS },
   validate: (raw) => ({
     ...validateBox(raw),
@@ -77,6 +78,10 @@ export const rectShape: ShapeDef<RectProps, "rect"> = {
   }),
   getBounds: boxBounds,
   onResize: boxResize,
+  toSvg: ({ props: p }) => {
+    const r = n(Math.min(p.radius, p.w / 2, p.h / 2));
+    return `<rect width="${n(p.w)}" height="${n(p.h)}" rx="${r}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`;
+  },
   Component: ({ shape }) => {
     const p = shape.props;
     return (
@@ -91,7 +96,14 @@ export const rectShape: ShapeDef<RectProps, "rect"> = {
       />
     );
   },
-  migrations: [],
+  migrations: [
+    // 1 → 2: rectangles from before `radius` existed drew a 10-unit corner. Store it, so the
+    // corner is an ordinary prop the style panel shows and edits.
+    (props) => {
+      const p = (props ?? {}) as Record<string, unknown>;
+      return typeof p.radius === "number" ? p : { ...p, radius: LEGACY_RADIUS };
+    },
+  ],
 };
 
 export const ellipseShape: ShapeDef<BoxProps, "ellipse"> = {
@@ -101,6 +113,14 @@ export const ellipseShape: ShapeDef<BoxProps, "ellipse"> = {
   validate: validateBox,
   getBounds: boxBounds,
   onResize: boxResize,
+  // A 48-gon is within a fraction of a unit of the true ellipse at board sizes.
+  getOutline: ({ props: p }) =>
+    Array.from({ length: 48 }, (_, i) => {
+      const a = (i / 48) * Math.PI * 2;
+      return { x: p.w / 2 + (Math.cos(a) * p.w) / 2, y: p.h / 2 + (Math.sin(a) * p.h) / 2 };
+    }),
+  toSvg: ({ props: p }) =>
+    `<ellipse cx="${n(p.w / 2)}" cy="${n(p.h / 2)}" rx="${n(p.w / 2)}" ry="${n(p.h / 2)}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`,
   Component: ({ shape }) => {
     const p = shape.props;
     return (

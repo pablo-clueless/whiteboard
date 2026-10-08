@@ -1,8 +1,8 @@
 "use client";
 
+import { type FormEvent, useState } from "react";
 import { MailCheck } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, useState } from "react";
 
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -69,7 +69,7 @@ export function SignInForm() {
           )}
         </Field>
         <label className="text-ink/75 flex w-fit cursor-pointer items-center gap-2.5 text-sm">
-          <Checkbox name="remember" defaultChecked className="size-[18px] rounded-[5px]" />
+          <Checkbox name="remember" defaultChecked className="size-4.5 rounded-[5px]" />
           Keep me logged in
         </label>
         <SubmitButton>Log in</SubmitButton>

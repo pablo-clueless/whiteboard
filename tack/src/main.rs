@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Arc::new(Config::from_env()?);
     let pool = db::connect(&config.database_url).await?;
     tracing::info!("database ready");
-    let state = AppState { config: config.clone(), pool: pool.clone(), rooms: RoomRegistry::new(pool) };
+    let state = AppState { config: config.clone(), pool: pool.clone(), rooms: RoomRegistry::new(pool, config.max_board_bytes) };
 
     let cors = CorsLayer::new()
         .allow_origin(

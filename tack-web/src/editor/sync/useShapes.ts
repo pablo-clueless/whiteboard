@@ -3,9 +3,8 @@
 import { useMemo, useSyncExternalStore } from "react";
 import type * as Y from "yjs";
 
-import { useEditorStore } from "@/stores/editor";
-
 import { type Editor, readShape } from "../editor-core";
+import { useEditorStore } from "@/stores/editor";
 import type { Shape } from "../types";
 
 type Store<T> = { subscribe: (onChange: () => void) => () => void; get: () => T };
@@ -56,7 +55,9 @@ const CULL_MARGIN = 0.5;
 
 function visibleIdsStore(editor: Editor, width: number, height: number): Store<string[]> {
   const compute = () => {
-    const { camera, selectedIds } = useEditorStore.getState();
+    const { camera, selectedIds, exporting } = useEditorStore.getState();
+    // Exporting draws shapes that may be off screen, so mount exactly those for the moment.
+    if (exporting) return exporting;
     const w = width / camera.zoom;
     const h = height / camera.zoom;
     const ids = editor.shapesInBox({
@@ -83,7 +84,12 @@ function visibleIdsStore(editor: Editor, width: number, height: number): Store<s
       snapshot = compute();
       const offIndex = editor.indexChanged.subscribe(update);
       const offStore = useEditorStore.subscribe((s, prev) => {
-        if (s.camera !== prev.camera || s.selectedIds !== prev.selectedIds) update();
+        if (
+          s.camera !== prev.camera ||
+          s.selectedIds !== prev.selectedIds ||
+          s.exporting !== prev.exporting
+        )
+          update();
       });
       return () => {
         offIndex();

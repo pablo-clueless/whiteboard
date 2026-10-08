@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { measureText, TEXT_LINE_HEIGHT, type TextProps, textFont, textShape } from "./shapes/text";
+import { cssFont, measureText, TEXT_LINE_HEIGHT, type TextProps, textShape } from "./shapes/text";
 import { useEditorStore } from "@/stores/editor";
 import type { Editor } from "./editor-core";
 import { useShape } from "./sync/useShapes";
@@ -50,7 +50,7 @@ function TextArea({ editor, id }: { editor: Editor; id: string }) {
 
   if (!shape || shape.type !== "text") return null;
   const p = textShape.validate(shape.props);
-  const { w, h } = measureText(p.text || " ", p.fontSize);
+  const { w, h } = measureText(p.text || " ", p);
   const z = camera.zoom;
 
   return (
@@ -77,7 +77,7 @@ function TextArea({ editor, id }: { editor: Editor; id: string }) {
         height: h * z,
         transform: shape.rotation ? `rotate(${shape.rotation}deg)` : undefined,
         transformOrigin: "top left",
-        font: `${p.fontSize * z}px ${textFont()}`,
+        font: cssFont(p, p.fontSize * z),
         lineHeight: TEXT_LINE_HEIGHT,
         color: p.color,
         caretColor: p.color,

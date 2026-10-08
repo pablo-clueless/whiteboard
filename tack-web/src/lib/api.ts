@@ -40,6 +40,12 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+/** Image types the server accepts, and the size limit. */
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+export const assetUrl = (assetId: string) => `${env.apiUrl}/api/assets/${assetId}`;
+
 export const api = {
   createBoard: () => request<ShareLinks>("/api/boards", { method: "POST" }),
   getBoard: (boardId: string, token: string) =>
@@ -47,6 +53,28 @@ export const api = {
   /** Replaces both links; everyone using the old ones is disconnected. Edit links only. */
   resetLinks: (boardId: string, token: string) =>
     request<ShareLinks>(`/api/boards/${boardId}/tokens`, { method: "POST", token }),
+  /** Uploads an image for a board. The id is the image's content hash. Edit links only. */
+  uploadAsset: async (boardId: string, token: string, file: Blob) => {
+    let res: Response;
+    try {
+      res = await fetch(`${env.apiUrl}/api/boards/${boardId}/assets`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      });
+    } catch {
+      throw new ApiError(0, "Can't reach the Tack server");
+    }
+    const data = (await res.json().catch(() => null)) as {
+      assetId?: string;
+      error?: string;
+    } | null;
+    if (!res.ok || !data?.assetId) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return { assetId: data.assetId };
+  },
   /** Adds one more link without revoking the others. Edit links only. */
   createLink: (boardId: string, token: string, role: Role) =>
     request<{ token: string; role: Role }>(`/api/boards/${boardId}/links`, {

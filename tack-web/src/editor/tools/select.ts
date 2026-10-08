@@ -1,7 +1,10 @@
 import { MousePointer2 } from "lucide-react";
 
-import { boxFromPoints, distance } from "../geometry";
-import type { Tool, ToolEvent, Vec } from "../types";
+import { boxFromPoints, distance, unionBox } from "../geometry";
+import type { Box, Tool, ToolEvent, Vec } from "../types";
+import { arrowTool, startArrowFrom } from "./line-tools";
+import { SNAP_DISTANCE, snapBox } from "../snapping";
+import { shapeRegistry } from "../shapes/registry";
 import type { Editor } from "../editor-core";
 
 /** Screen pixels the pointer must travel before a press becomes a drag. */
@@ -10,8 +13,18 @@ const DRAG_THRESHOLD = 3;
 type State =
   | { kind: "idle" }
   | { kind: "pointing"; start: Vec; screen: Vec; targetId: string }
-  | { kind: "dragging"; start: Vec; origins: Map<string, Vec> }
-  | { kind: "brushing"; start: Vec; base: string[] };
+  | {
+      kind: "dragging";
+      start: Vec;
+      origins: Map<string, Vec>;
+      /** Bounds of what's being dragged, at the start of the drag. */
+      box: Box | null;
+      /** Bounds of the other shapes in view, to snap to. */
+      targets: Box[];
+    }
+  | { kind: "brushing"; start: Vec; base: string[] }
+  /** Pressed on a connection point: dragging draws an arrow from it. */
+  | { kind: "connecting"; screen: Vec; shapeId: string; moved: boolean };
 
 let state: State = { kind: "idle" };
 
@@ -22,7 +35,8 @@ function beginDrag(editor: Editor, start: Vec) {
     return;
   }
   const origins = new Map<string, Vec>();
-  for (const id of editor.ui.selectedIds) {
+  // Containers carry what's inside them.
+  for (const id of editor.withChildren(editor.ui.selectedIds)) {
     const s = editor.getShape(id);
     if (s && !s.locked) origins.set(id, { x: s.x, y: s.y });
   }
@@ -36,7 +50,33 @@ function beginDrag(editor: Editor, start: Vec) {
       if (binding && !origins.has(binding.toId)) editor.setBinding(id, terminal, null);
     }
   }
-  state = { kind: "dragging", start, origins };
+  state = { kind: "dragging", start, origins, ...snapSetup(editor, [...origins.keys()]) };
+}
+
+/** Lines and arrows have padded bounds that would snap oddly; snap by their ends' box only. */
+const isLinear = (editor: Editor, id: string) => {
+  const type = editor.getShape(id)?.type;
+  return !!type && !!shapeRegistry.get(type)?.getHandles;
+};
+
+function snapSetup(editor: Editor, moving: string[]) {
+  const movingSet = new Set(moving);
+  const solid = moving.filter((id) => !isLinear(editor, id));
+  const box = unionBox((solid.length ? solid : moving).map((id) => editor.getBounds(id)));
+  const { camera } = editor.ui;
+  const stage = editor.stage;
+  const view = {
+    x: -camera.x / camera.zoom,
+    y: -camera.y / camera.zoom,
+    w: (stage?.width() ?? window.innerWidth) / camera.zoom,
+    h: (stage?.height() ?? window.innerHeight) / camera.zoom,
+  };
+  const targets = editor
+    .shapesInBox(view)
+    .filter((id) => !movingSet.has(id) && !isLinear(editor, id))
+    .map((id) => editor.getBounds(id))
+    .filter((b): b is Box => !!b);
+  return { box, targets };
 }
 
 function moveTo(editor: Editor, origins: Map<string, Vec>, dx: number, dy: number) {
@@ -56,8 +96,23 @@ export const selectTool: Tool = {
   shortcut: "v",
   cursor: "default",
 
+  onHover(e, editor) {
+    if (!e || editor.readOnly) return editor.ui.setConnect(null);
+    // Connection points show on the shape under the pointer, and on one it's close to the edge of.
+    const near = editor.connectionAt(e.point, { nearOnly: true });
+    if (near) return editor.ui.setConnect({ shapeId: near.shapeId, port: near.port });
+    const over = e.targetId && editor.portsOnPage(e.targetId).length ? e.targetId : null;
+    editor.ui.setConnect(over ? { shapeId: over, port: null } : null);
+  },
+
   onPointerDown(e: ToolEvent, editor) {
     const { selectedIds } = editor.ui;
+    const port = editor.readOnly ? null : editor.connectionAt(e.point, { nearOnly: true });
+    if (port) {
+      state = { kind: "connecting", screen: e.screen, shapeId: port.shapeId, moved: false };
+      startArrowFrom(e, editor);
+      return;
+    }
     if (e.targetId) {
       const id = e.targetId;
       if (e.shiftKey) {
@@ -77,6 +132,11 @@ export const selectTool: Tool = {
 
   onPointerMove(e, editor) {
     switch (state.kind) {
+      case "connecting":
+        if (!state.moved && distance(state.screen, e.screen) < DRAG_THRESHOLD) return;
+        state.moved = true;
+        arrowTool.onPointerMove!(e, editor);
+        return;
       case "pointing":
         if (distance(state.screen, e.screen) < DRAG_THRESHOLD) return;
         // Shift-clicking a selected shape deselects it; dragging it should still move the group.
@@ -86,31 +146,69 @@ export const selectTool: Tool = {
         beginDrag(editor, state.start);
         selectTool.onPointerMove!(e, editor);
         return;
-      case "dragging":
-        moveTo(editor, state.origins, e.point.x - state.start.x, e.point.y - state.start.y);
+      case "dragging": {
+        let dx = e.point.x - state.start.x;
+        let dy = e.point.y - state.start.y;
+        // Snap edges and centres to other shapes; Alt moves freely.
+        if (state.box && !e.altKey) {
+          const moved = { ...state.box, x: state.box.x + dx, y: state.box.y + dy };
+          const snap = snapBox(moved, state.targets, SNAP_DISTANCE / editor.ui.camera.zoom);
+          dx += snap.dx;
+          dy += snap.dy;
+          editor.ui.setGuides(snap.guides);
+        } else {
+          editor.ui.setGuides([]);
+        }
+        moveTo(editor, state.origins, dx, dy);
         return;
+      }
       case "brushing": {
         const brush = boxFromPoints(state.start, e.point);
         editor.ui.setBrush(brush);
-        const hits = editor.shapesInBox(brush);
+        // A container is picked only when the box swallows it whole, so a box dragged inside a
+        // frame selects what's in the frame rather than the frame.
+        const hits = editor.shapesInBox(brush).filter((id) => {
+          if (!editor.isContainer(id)) return true;
+          const b = editor.getBounds(id);
+          return (
+            !!b &&
+            b.x >= brush.x &&
+            b.y >= brush.y &&
+            b.x + b.w <= brush.x + brush.w &&
+            b.y + b.h <= brush.y + brush.h
+          );
+        });
         editor.select([...new Set([...state.base, ...hits])]);
         return;
       }
     }
   },
 
-  onPointerUp(_e, editor) {
+  onPointerUp(e, editor) {
+    if (state.kind === "connecting") {
+      // A click on a connection point, without a drag, just selects the shape.
+      if (state.moved) arrowTool.onPointerUp!(e, editor);
+      else {
+        arrowTool.onCancel!(editor);
+        editor.select([state.shapeId]);
+      }
+      state = { kind: "idle" };
+      return;
+    }
     if (state.kind === "dragging") {
       editor.endGesture();
+      editor.ui.setGuides([]);
     }
     if (state.kind === "brushing") editor.ui.setBrush(null);
     state = { kind: "idle" };
   },
 
   onCancel(editor) {
+    if (state.kind === "connecting") arrowTool.onCancel!(editor);
     if (state.kind === "dragging") {
       moveTo(editor, state.origins, 0, 0);
       editor.endGesture();
+      editor.ui.setGuides([]);
     }
     editor.ui.setBrush(null);
     state = { kind: "idle" };

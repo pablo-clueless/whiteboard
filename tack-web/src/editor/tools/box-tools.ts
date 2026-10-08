@@ -1,6 +1,7 @@
 import {
   Circle,
   Diamond,
+  Frame,
   Hexagon,
   type LucideIcon,
   Octagon,
@@ -16,8 +17,11 @@ import type { Box, Tool, Vec } from "../types";
 /** Screen pixels the pointer must travel before a press draws instead of placing a default. */
 const DRAW_THRESHOLD = 4;
 
-/** Drag out a box shape; click to drop one at its default size. Shift keeps it square. */
-function boxTool(opts: {
+/**
+ * Drag out a box shape; click to drop one at its default size. Shift keeps it square. Exported
+ * for plugins: any shape with `w` and `h` props can get a drawing tool from this.
+ */
+export function boxTool(opts: {
   id: string;
   label: string;
   icon: LucideIcon;
@@ -143,4 +147,12 @@ export const starTool = boxTool({
   icon: Star,
   shapeType: "star",
   group: SHAPES_GROUP,
+});
+
+export const frameTool = boxTool({
+  id: "frame",
+  label: "Frame",
+  icon: Frame,
+  shortcut: "f",
+  shapeType: "frame",
 });

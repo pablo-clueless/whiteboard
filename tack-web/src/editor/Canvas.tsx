@@ -1,17 +1,19 @@
 "use client";
 
-import { Circle, Group, Layer, Rect, Stage, Transformer } from "react-konva";
+import { Circle, Group, Layer, Line, Rect, Stage, Transformer } from "react-konva";
 import { memo, useEffect, useRef, useState } from "react";
 import type { KonvaEventObject } from "konva/lib/Node";
+import type { Awareness } from "y-protocols/awareness";
 import Konva from "konva";
 
 import { useFrozenShape, useShape, useVisibleShapeIds } from "./sync/useShapes";
 import { screenToPage, useEditorStore, zoomAt } from "@/stores/editor";
-import { anchorFor, type Terminal, toPage } from "./bindings";
 import type { Shape, Tool, ToolEvent, Vec } from "./types";
+import { type Terminal, toPage } from "./bindings";
 import { shapeRegistry } from "./shapes/registry";
 import { toolRegistry } from "./tools/registry";
 import type { Editor } from "./editor-core";
+import { RemotePresence } from "./Presence";
 import { handTool } from "./tools/hand";
 
 const SELECTION_BLUE = "#3366ff";
@@ -21,7 +23,7 @@ const NUDGE_BIG = 10;
 /** How long the camera must be still before shapes become clickable again after a pan or zoom. */
 const HIT_SETTLE_MS = 150;
 
-export function Canvas({ editor }: { editor: Editor }) {
+export function Canvas({ editor, awareness }: { editor: Editor; awareness: Awareness }) {
   const size = useWindowSize();
   const camera = useEditorStore((s) => s.camera);
   const toolId = useEditorStore((s) => s.toolId);
@@ -96,9 +98,12 @@ export function Canvas({ editor }: { editor: Editor }) {
             <SelectionHandles editor={editor} width={size.width} height={size.height} />
             <EndpointHandles editor={editor} />
             <Brush />
+            <Guides />
+            <ConnectionPorts editor={editor} />
           </Layer>
-          {/* TODO(M5): remote cursors */}
-          <Layer name="presence" listening={false} />
+          <Layer name="presence" listening={false}>
+            <RemotePresence editor={editor} awareness={awareness} />
+          </Layer>
         </Stage>
       )}
     </div>
@@ -178,7 +183,11 @@ function useCanvasInput(editor: Editor, toolId: string) {
     },
     onPointerMove(e: KonvaEventObject<PointerEvent>) {
       const g = gesture.current;
-      if (!g || g.pointerId !== e.evt.pointerId) return;
+      if (!g) {
+        if (e.evt.buttons === 0) currentTool().onHover?.(toEvent(e), editor);
+        return;
+      }
+      if (g.pointerId !== e.evt.pointerId) return;
       g.tool.onPointerMove?.(toEvent(e), editor);
     },
     onPointerUp(e: KonvaEventObject<PointerEvent>) {
@@ -190,6 +199,9 @@ function useCanvasInput(editor: Editor, toolId: string) {
     },
     onPointerCancel() {
       cancelGesture();
+    },
+    onPointerLeave() {
+      if (!gesture.current) currentTool().onHover?.(null, editor);
     },
     onDblClick(e: KonvaEventObject<MouseEvent>) {
       // Double-click text to edit it.
@@ -214,6 +226,9 @@ function useCanvasInput(editor: Editor, toolId: string) {
     },
   };
 
+  // Connection points shown for one tool shouldn't linger into the next.
+  useEffect(() => editor.ui.setConnect(null), [editor, toolId]);
+
   // Keep the latest closures for the window listeners without re-binding them every render.
   const latest = useRef({ currentTool, cancelGesture });
   useEffect(() => {
@@ -237,6 +252,10 @@ function useCanvasInput(editor: Editor, toolId: string) {
       } else if (mod && key === "a") {
         e.preventDefault();
         editor.select(editor.sortedIds());
+      } else if (mod && key === "d") {
+        // Duplicate, rather than the browser's bookmark shortcut.
+        e.preventDefault();
+        if (selectedIds.length) editor.duplicate(selectedIds);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (!selectedIds.length) return;
         e.preventDefault();
@@ -312,6 +331,7 @@ const ShapeView = memo(function ShapeView({ editor, id }: { editor: Editor; id: 
   const frozen = useFrozenShape(editor, id);
   const shape = frozen ?? live;
   const isSelected = useEditorStore((s) => s.selectedIds.includes(id));
+  const erasing = useEditorStore((s) => s.erasingIds.includes(id));
   if (!shape) return null;
 
   const def = shapeRegistry.get(shape.type);
@@ -325,7 +345,14 @@ const ShapeView = memo(function ShapeView({ editor, id }: { editor: Editor; id: 
   }
 
   return (
-    <Group id={id} name="shape" x={shape.x} y={shape.y} rotation={shape.rotation}>
+    <Group
+      id={id}
+      name="shape"
+      x={shape.x}
+      y={shape.y}
+      rotation={shape.rotation}
+      opacity={erasing ? 0.25 : 1}
+    >
       <def.Component shape={{ ...shape, props }} isSelected={isSelected} />
     </Group>
   );
@@ -477,33 +504,49 @@ function EndpointHandles({ editor }: { editor: Editor }) {
     };
   };
 
-  const moveEnd = (terminal: Terminal, to: Vec) => {
+  /** Where a dragged end would connect: a connection point of another shape (arrows only). */
+  const connectionFor = (terminal: Terminal, at: Vec) => {
+    if (shape.type !== "arrow") return null;
+    const other = editor.getBinding(shape.id, terminal === "start" ? "end" : "start");
+    const c = editor.connectionAt(at, { excludeId: shape.id });
+    // An arrow from a shape to itself has no direction; leave the end free instead.
+    return c && c.shapeId !== other?.toId ? c : null;
+  };
+
+  const moveEnd = (terminal: Terminal, at: Vec) => {
     const current = ends();
     if (!current) return;
+    const c = connectionFor(terminal, at);
+    editor.ui.setConnect(c ? { shapeId: c.shapeId, port: c.port } : null);
+    const to = c?.point ?? at;
     const start = terminal === "start" ? to : current.start;
     const end = terminal === "end" ? to : current.end;
     editor.writeEachFrame(() =>
-      editor.updateShapes({
-        [shape.id]: {
-          x: start.x,
-          y: start.y,
-          rotation: 0,
-          props: {
-            ...(current.shape.props as object),
-            path: [0, 0, end.x - start.x, end.y - start.y],
+      editor.transact(() => {
+        // While dragged, the end is free; it attaches on release.
+        if (editor.getBinding(shape.id, terminal)) editor.setBinding(shape.id, terminal, null);
+        editor.updateShapes({
+          [shape.id]: {
+            x: start.x,
+            y: start.y,
+            rotation: 0,
+            props: {
+              ...(current.shape.props as object),
+              path: [0, 0, end.x - start.x, end.y - start.y],
+            },
           },
-        },
+        });
+        editor.rerouteArrow(shape.id);
       }),
     );
   };
 
   const dropEnd = (terminal: Terminal, at: Vec) => {
     editor.flush();
+    editor.ui.setConnect(null);
     if (shape.type === "arrow") {
-      const other = editor.getBinding(shape.id, terminal === "start" ? "end" : "start");
-      const target = editor.bindableShapeAt(at, shape.id);
-      const anchor = target && target.id !== other?.toId ? anchorFor(target, at) : null;
-      editor.setBinding(shape.id, terminal, target && anchor ? { toId: target.id, anchor } : null);
+      const c = connectionFor(terminal, at);
+      editor.setBinding(shape.id, terminal, c ? { toId: c.shapeId, anchor: c.anchor } : null);
     }
     editor.endGesture();
   };
@@ -555,6 +598,57 @@ function Brush() {
       listening={false}
     />
   );
+}
+
+/**
+ * Connection points of the shape an arrow would attach to (or the one under the pointer), with
+ * the one in use filled in.
+ */
+function ConnectionPorts({ editor }: { editor: Editor }) {
+  const connect = useEditorStore((s) => s.connect);
+  const zoom = useEditorStore((s) => s.camera.zoom);
+  // Follow the shape if it moves while the points are showing.
+  useShape(editor, connect?.shapeId ?? "");
+  if (!connect) return null;
+  return editor.portsOnPage(connect.shapeId).map((p, i) => {
+    const active = i === connect.port;
+    return (
+      <Circle
+        key={i}
+        x={p.x}
+        y={p.y}
+        radius={(active ? 5.5 : 4) / zoom}
+        fill={active ? SELECTION_BLUE : "white"}
+        stroke={SELECTION_BLUE}
+        strokeWidth={1.5 / zoom}
+        listening={false}
+      />
+    );
+  });
+}
+
+const GUIDE_COLOR = "#ff3d7f";
+
+/** Alignment guides while a dragged shape is snapped to others. */
+function Guides() {
+  const guides = useEditorStore((s) => s.guides);
+  const zoom = useEditorStore((s) => s.camera.zoom);
+  // Run a little past the shapes at each end, a fixed distance on screen.
+  const overhang = 8 / zoom;
+  return guides.map((g, i) => (
+    <Line
+      key={i}
+      points={
+        g.axis === "x"
+          ? [g.at, g.from - overhang, g.at, g.to + overhang]
+          : [g.from - overhang, g.at, g.to + overhang, g.at]
+      }
+      stroke={GUIDE_COLOR}
+      strokeWidth={1 / zoom}
+      dash={[4 / zoom, 3 / zoom]}
+      listening={false}
+    />
+  ));
 }
 
 function useWindowSize() {

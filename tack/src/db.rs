@@ -168,3 +168,33 @@ pub async fn max_seq(pool: &PgPool, board_id: Uuid) -> sqlx::Result<i64> {
     .await?;
     Ok(seq.unwrap_or(0))
 }
+
+/// Stores an image unless one with the same hash exists. Returns whether it was new.
+pub async fn insert_asset(
+    pool: &PgPool,
+    id: &[u8; 32],
+    board_id: Uuid,
+    mime: &str,
+    bytes: &[u8],
+) -> sqlx::Result<bool> {
+    let inserted = sqlx::query(
+        "INSERT INTO assets (id, board_id, mime, size, bytes) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(id.as_slice())
+    .bind(board_id)
+    .bind(mime)
+    .bind(bytes.len() as i32)
+    .bind(bytes)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(inserted == 1)
+}
+
+/// An image's type and bytes.
+pub async fn asset(pool: &PgPool, id: &[u8; 32]) -> sqlx::Result<Option<(String, Vec<u8>)>> {
+    sqlx::query_as("SELECT mime, bytes FROM assets WHERE id = $1")
+        .bind(id.as_slice())
+        .fetch_optional(pool)
+        .await
+}

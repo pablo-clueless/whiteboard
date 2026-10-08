@@ -27,17 +27,33 @@ export function createBoardDoc(doc = new Y.Doc()): BoardDoc {
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
+/** Custom y-websocket message type: the board is full. Matches `MSG_BOARD_FULL` in the server. */
+export const MESSAGE_BOARD_FULL = 100;
+/** Provider event emitted when that message arrives. */
+export const BOARD_FULL_EVENT = "board-full";
+
+/** The provider's event emitter, typed for the board-full event it doesn't know about. */
+export type BoardFullEvents = {
+  on(event: typeof BOARD_FULL_EVENT, fn: () => void): void;
+  off(event: typeof BOARD_FULL_EVENT, fn: () => void): void;
+  emit(event: typeof BOARD_FULL_EVENT, args: []): void;
+};
+
 export function connectBoard(
   boardId: string,
   board: BoardDoc,
   { token, connect = true }: { token: string; connect?: boolean },
 ) {
-  return new WebsocketProvider(env.wsUrl, boardId, board.doc, {
+  const provider = new WebsocketProvider(env.wsUrl, boardId, board.doc, {
     connect,
     // Tabs must sync through the server, not BroadcastChannel, or we'd never exercise the wire.
     disableBc: true,
     params: { token },
   });
+  // The message carries nothing beyond its type, so the handler reads nothing from it.
+  provider.messageHandlers[MESSAGE_BOARD_FULL] = () =>
+    (provider as unknown as BoardFullEvents).emit(BOARD_FULL_EVENT, []);
+  return provider;
 }
 
 /** Points the provider at a new token; it takes effect on the next (re)connect. */

@@ -1,6 +1,7 @@
 import { Line } from "react-konva";
 
 import type { ShapeDef } from "../types";
+import { paint, points } from "../svg";
 
 import { type BoxProps, boxBounds, boxResize, clamp, DEFAULT_BOX, num, validateBox } from "./box";
 
@@ -56,6 +57,9 @@ export function starPoints(points: number, innerRatio: number, w: number, h: num
   );
 }
 
+const toVecs = (flat: number[]) =>
+  Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], y: flat[i * 2 + 1] }));
+
 export const polygonShape: ShapeDef<PolygonProps, "polygon"> = {
   type: "polygon",
   version: 1,
@@ -68,6 +72,9 @@ export const polygonShape: ShapeDef<PolygonProps, "polygon"> = {
   }),
   getBounds: boxBounds,
   onResize: boxResize,
+  getOutline: ({ props: p }) => toVecs(polygonPoints(p.sides, p.w, p.h)),
+  toSvg: ({ props: p }) =>
+    `<polygon points="${points(polygonPoints(p.sides, p.w, p.h))}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`,
   Component: ({ shape }) => {
     const p = shape.props;
     return (
@@ -99,6 +106,9 @@ export const starShape: ShapeDef<StarProps, "star"> = {
   },
   getBounds: boxBounds,
   onResize: boxResize,
+  getOutline: ({ props: p }) => toVecs(starPoints(p.points, p.innerRatio, p.w, p.h)),
+  toSvg: ({ props: p }) =>
+    `<polygon points="${points(starPoints(p.points, p.innerRatio, p.w, p.h))}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`,
   Component: ({ shape }) => {
     const p = shape.props;
     return (

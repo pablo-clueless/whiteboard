@@ -31,14 +31,17 @@ use crate::db;
 const IDLE_SHUTDOWN: Duration = Duration::from_secs(60);
 /// Updates since the last snapshot before the room writes a new one.
 const COMPACT_AFTER: usize = 500;
-/// Boards stop accepting edits past roughly this size (encoded state plus updates since).
-const MAX_DOC_BYTES: usize = 20 * 1024 * 1024;
+/// Custom y-websocket message type telling an editor the board is full and its edits aren't being
+/// saved. Matches `MESSAGE_BOARD_FULL` in the web client. Sent once per connection.
+const MSG_BOARD_FULL: u8 = 100;
 
 struct Client {
     role: Role,
     tx: mpsc::Sender<Bytes>,
     /// Awareness client ids announced over this connection, cleared when it leaves.
     awareness_ids: HashSet<ClientID>,
+    /// Already told the board is full.
+    told_full: bool,
 }
 
 struct Room {
@@ -49,6 +52,9 @@ struct Room {
     updates_since_snapshot: usize,
     /// Approximate encoded size: last snapshot plus every update applied since.
     doc_bytes: usize,
+    max_doc_bytes: usize,
+    /// An edit was refused for size. Editors who join are told straight away.
+    full: bool,
 }
 
 pub(super) async fn run(board_id: BoardId, mut rx: mpsc::Receiver<RoomMsg>, registry: RoomRegistry) {
@@ -94,6 +100,8 @@ pub(super) async fn run(board_id: BoardId, mut rx: mpsc::Receiver<RoomMsg>, regi
         persister: Persister::spawn(registry.pool.clone(), board_id),
         updates_since_snapshot: stored.updates.len(),
         doc_bytes,
+        max_doc_bytes: registry.max_doc_bytes,
+        full: doc_bytes >= registry.max_doc_bytes,
     };
     let mut idle_since = Some(Instant::now());
 
@@ -145,7 +153,21 @@ impl Room {
         if tx.try_send(encoder.to_vec().into()).is_err() {
             return;
         }
-        self.clients.insert(conn, Client { role, tx, awareness_ids: HashSet::new() });
+        self.clients.insert(conn, Client { role, tx, awareness_ids: HashSet::new(), told_full: false });
+        // An editor joining a board that's already full should know before it edits anything.
+        if role == Role::Edit && self.full {
+            self.tell_full(conn);
+        }
+    }
+
+    /// Tells an editor (once) that the board is full and further edits won't be kept.
+    fn tell_full(&mut self, conn: ConnId) {
+        let Some(client) = self.clients.get_mut(&conn) else { return };
+        if client.told_full {
+            return;
+        }
+        client.told_full = true;
+        self.send_to(conn, &Message::Custom(MSG_BOARD_FULL, Vec::new()));
     }
 
     fn leave(&mut self, conn: ConnId) {
@@ -198,10 +220,12 @@ impl Room {
     }
 
     fn apply_update(&mut self, conn: ConnId, raw: Vec<u8>) {
-        if self.doc_bytes + raw.len() > MAX_DOC_BYTES {
-            // The sender keeps its change locally and stays out of sync with the room for it.
-            // TODO: tell the client the board is full instead of failing silently.
+        if self.doc_bytes + raw.len() > self.max_doc_bytes {
+            // The sender keeps its change locally and stays out of sync with the room for it, so
+            // tell it: the client stops editing and says why.
             tracing::warn!(board_id = %self.board_id, %conn, bytes = self.doc_bytes, "board full; update dropped");
+            self.full = true;
+            self.tell_full(conn);
             return;
         }
         let update = match Update::decode_v1(&raw) {
@@ -228,6 +252,8 @@ impl Room {
     fn snapshot(&mut self) {
         let state = self.awareness.doc().transact().encode_state_as_update_v1(&StateVector::default());
         self.doc_bytes = state.len();
+        // Compaction can shrink a board back under the limit.
+        self.full = self.doc_bytes >= self.max_doc_bytes;
         self.updates_since_snapshot = 0;
         self.persister.snapshot(state);
     }
@@ -235,8 +261,7 @@ impl Room {
     fn apply_awareness(&mut self, conn: ConnId, mut update: AwarenessUpdate) {
         // When a connection drops we announce its clients as gone at clock + 1. If one reconnects
         // it re-announces at its old clock, which everyone (us included) would ignore as stale.
-        // Stamp it past the removal, and echo that back so the client's own clock catches up.
-        let mut restamped = false;
+        // Stamp it past the removal; the echo below lets the client's own clock catch up.
         for (&id, entry) in update.clients.iter_mut() {
             if &*entry.json == "null" {
                 continue;
@@ -247,11 +272,7 @@ impl Room {
                 && entry.clock <= clock
             {
                 entry.clock = clock + 1;
-                restamped = true;
             }
-        }
-        if restamped {
-            self.send_to(conn, &Message::Awareness(update.clone()));
         }
 
         if let Err(err) = self.awareness.apply_update(update.clone()) {
@@ -267,7 +288,10 @@ impl Room {
                 }
             }
         }
-        self.broadcast(Some(conn), &Message::Awareness(update));
+        // Echoed to the sender too, like the reference y-websocket server. y-websocket drops a
+        // connection that hears nothing for 30 s, and the client renews its awareness every 15 s,
+        // so without the echo anyone alone on a board would reconnect every 30 s.
+        self.broadcast(None, &Message::Awareness(update));
     }
 
     fn send_to(&mut self, conn: ConnId, msg: &Message) {

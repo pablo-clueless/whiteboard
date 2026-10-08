@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { cn } from "cn";
 
-import { api } from "@/lib/api";
 import { rememberLink } from "@/lib/board-links";
+import { api } from "@/lib/api";
 
 /** Honours the OS "reduce motion" setting for every animation on the page. */
 export function MotionRoot({ children }: { children: React.ReactNode }) {
@@ -34,7 +34,6 @@ export function Logo({ className }: { className?: string }) {
       )}
     >
       tack
-      <Pin className="absolute top-1/2 -right-5 size-5 -translate-y-1/2" />
     </span>
   );
 }

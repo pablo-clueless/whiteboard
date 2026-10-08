@@ -8,6 +8,8 @@ pub struct Config {
     /// Origins allowed to open a WebSocket or call the REST API.
     pub allowed_origins: Vec<String>,
     pub database_url: String,
+    /// Boards stop accepting edits past roughly this many bytes of encoded state.
+    pub max_board_bytes: usize,
 }
 
 impl Config {
@@ -27,7 +29,12 @@ impl Config {
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://tack:tack@localhost:5434/tack".into());
 
-        Ok(Self { addr, allowed_origins, database_url })
+        let max_board_bytes = match std::env::var("TACK_MAX_BOARD_BYTES") {
+            Ok(v) => v.parse().context("TACK_MAX_BOARD_BYTES must be a number of bytes")?,
+            Err(_) => 20 * 1024 * 1024,
+        };
+
+        Ok(Self { addr, allowed_origins, database_url, max_board_bytes })
     }
 
     pub fn is_origin_allowed(&self, origin: &str) -> bool {

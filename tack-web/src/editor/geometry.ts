@@ -39,3 +39,14 @@ export function rotatedBounds(x: number, y: number, w: number, h: number, rotati
   const minY = Math.min(...ys);
   return { x: minX, y: minY, w: Math.max(...xs) - minX, h: Math.max(...ys) - minY };
 }
+
+/** The smallest box containing all of `boxes` (nulls ignored), or null if there are none. */
+export function unionBox(boxes: (Box | null)[]): Box | null {
+  let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const b of boxes) {
+    if (!b) continue;
+    [minX, minY] = [Math.min(minX, b.x), Math.min(minY, b.y)];
+    [maxX, maxY] = [Math.max(maxX, b.x + b.w), Math.max(maxY, b.y + b.h)];
+  }
+  return minX === Infinity ? null : { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}

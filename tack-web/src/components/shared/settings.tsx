@@ -1,6 +1,7 @@
 import { Palette, ShieldLock, UserCircle, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
+import { cn } from "cn";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +11,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../ui/dialog";
-import { cn } from "cn";
 
 const TABS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "account", label: "Account", icon: UserCircle },

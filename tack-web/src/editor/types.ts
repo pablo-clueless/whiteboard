@@ -22,6 +22,8 @@ export type Shape<P = unknown, T extends string = string> = {
   parentId: string | null;
   locked: boolean;
   props: P;
+  /** Version of `props`, from the ShapeDef that wrote them. Missing means 1. */
+  v?: number;
 };
 
 export type Handle = { id: string; point: Vec };
@@ -37,6 +39,11 @@ export type ResizeInfo = {
 export type ShapeDef<P = unknown, T extends string = string> = {
   type: T;
   version: number;
+  /**
+   * Containers (frames) hold the shapes whose centre is inside them: those get the container as
+   * `parentId` and move with it. Containers draw below every other shape and don't nest.
+   */
+  isContainer?: boolean;
   defaultProps: P;
   validate: (props: unknown) => P;
   /**
@@ -49,7 +56,16 @@ export type ShapeDef<P = unknown, T extends string = string> = {
   hitTest?: (shape: Shape<P, T>, point: Vec, tolerance: number) => boolean;
   getHandles?: (shape: Shape<P, T>) => Handle[];
   onResize?: (shape: Shape<P, T>, info: ResizeInfo) => Partial<Shape<P, T>>;
+  /**
+   * Connection points for arrows, in the shape's own space. Defaults to the middle of each side
+   * of the outline (top, right, bottom, left).
+   */
   getAnchors?: (shape: Shape<P, T>) => Vec[];
+  /**
+   * The outline as a polygon in the shape's own space, scaling with `w` and `h`. Arrow ends sit
+   * exactly on it. Defaults to the w×h box; curved and pointy shapes should provide their own.
+   */
+  getOutline?: (shape: Shape<P, T>) => Vec[];
   toSvg?: (shape: Shape<P, T>) => string;
   /** Ordered: `migrations[n]` upgrades props from version n to n + 1. */
   migrations: ((props: unknown) => unknown)[];
@@ -89,6 +105,8 @@ export type Tool = {
   onPointerDown?: (e: ToolEvent, editor: Editor) => void;
   onPointerMove?: (e: ToolEvent, editor: Editor) => void;
   onPointerUp?: (e: ToolEvent, editor: Editor) => void;
+  /** The pointer moving with no button down, e.g. to show where a click would connect. */
+  onHover?: (e: ToolEvent | null, editor: Editor) => void;
   onKeyDown?: (e: KeyboardEvent, editor: Editor) => void;
   /** Escape, or switching tools mid-gesture. Undo any half-finished work. */
   onCancel?: (editor: Editor) => void;

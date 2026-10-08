@@ -1,8 +1,8 @@
 "use client";
 
+import { type ComponentProps, type ReactNode, useId, useState } from "react";
 import { Eye, EyeOff, Info } from "lucide-react";
 import Link from "next/link";
-import { type ComponentProps, type ReactNode, useId, useState } from "react";
 import { cn } from "cn";
 
 import { Input } from "@/components/ui/input";
@@ -70,7 +70,7 @@ export function PasswordInput({ className, ...props }: ComponentProps<"input">) 
         aria-pressed={visible}
         className="text-ink/45 hover:text-ink focus-visible:ring-primary/30 absolute top-1/2 right-1.5 grid size-8 -translate-y-1/2 place-items-center rounded-lg outline-none focus-visible:ring-3"
       >
-        {visible ? <EyeOff className="size-[18px]" /> : <Eye className="size-[18px]" />}
+        {visible ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
       </button>
     </div>
   );
@@ -105,7 +105,7 @@ export function GoogleButton({ children, onClick }: { children: ReactNode; onCli
       onClick={onClick}
       className="text-ink focus-visible:ring-primary/30 flex h-11 w-full items-center justify-center gap-2.5 rounded-xl border border-[#e2e2e7] bg-white text-[15px] font-semibold transition-colors outline-none hover:bg-[#f8f8f9] focus-visible:ring-4"
     >
-      <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden>
+      <svg viewBox="0 0 24 24" className="size-4.5" aria-hidden>
         <path
           fill="#4285F4"
           d="M22.6 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h5.9a5 5 0 0 1-2.2 3.3v2.7h3.6c2.1-1.9 3.3-4.8 3.3-8.1z"

@@ -72,11 +72,13 @@ impl RoomHandle {
 pub struct RoomRegistry {
     rooms: Arc<DashMap<BoardId, RoomHandle>>,
     pool: PgPool,
+    /// Boards stop accepting edits past roughly this size (encoded state plus updates since).
+    max_doc_bytes: usize,
 }
 
 impl RoomRegistry {
-    pub fn new(pool: PgPool) -> Self {
-        Self { rooms: Arc::default(), pool }
+    pub fn new(pool: PgPool, max_doc_bytes: usize) -> Self {
+        Self { rooms: Arc::default(), pool, max_doc_bytes }
     }
 
     /// Joins the board's room, starting its actor (and loading the board) if it isn't running.

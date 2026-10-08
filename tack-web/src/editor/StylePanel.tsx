@@ -20,11 +20,20 @@ import {
 
 import type { Editor, ShapeKnobs, StyleProps, ZOrderMove } from "./editor-core";
 import { MAX_POINTS, MAX_SIDES, MIN_POINTS, MIN_SIDES } from "./shapes/polygon";
+import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "./shapes/text";
 import { Slider as UiSlider } from "@/components/ui/slider";
+import { shapeRegistry } from "./shapes/registry";
 import { useEditorStore } from "@/stores/editor";
 import { MAX_STROKE_WIDTH } from "./shapes/box";
-import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "./shapes/text";
 import { useShape } from "./sync/useShapes";
+import {
+  closestWeight,
+  DEFAULT_WEIGHT,
+  fontFamily,
+  TEXT_FONTS,
+  textFontById,
+  WEIGHT_NAMES,
+} from "./fonts";
 
 const FILLS = [
   { value: "transparent", label: "No fill" },
@@ -72,12 +81,15 @@ const WIDTHS = [
 
 const MAX_RADIUS = 200;
 
-const FONT_SIZES = [
+/** Smallest to largest. Medium is the size new text starts at. */
+export const FONT_SIZES = [
+  { value: 12, short: "XS", label: "Extra small" },
   { value: 16, short: "S", label: "Small" },
   { value: 24, short: "M", label: "Medium" },
-  { value: 36, short: "L", label: "Large" },
-  { value: 56, short: "XL", label: "Extra large" },
-];
+  { value: 32, short: "L", label: "Large" },
+  { value: 48, short: "XL", label: "Extra large" },
+  { value: 64, short: "2XL", label: "Huge" },
+] as const;
 
 const LAYER_ACTIONS: { move: ZOrderMove; label: string; icon: typeof ArrowUp }[] = [
   { move: "front", label: "Bring to front (Ctrl/⌘ ])", icon: ArrowUpToLine },
@@ -291,6 +303,39 @@ function NumberInput({
   );
 }
 
+/** A one-line text box that commits on Enter or blur; Escape puts the old text back. */
+function TextField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  onCommit: (s: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const commit = () => {
+    const next = draft.trim();
+    if (!next) return setDraft(value);
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <input
+      type="text"
+      aria-label={label}
+      value={draft}
+      maxLength={200}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") setDraft(value);
+      }}
+      className="text-ink focus-visible:border-primary focus-visible:ring-primary/20 h-8 w-full rounded-lg border bg-white px-2.5 text-xs outline-none focus-visible:ring-3"
+    />
+  );
+}
+
 /** A slider whose whole drag undoes as one step. */
 function Slider({
   label,
@@ -404,7 +449,14 @@ export function StylePanel({ editor }: { editor: Editor }) {
   const first = useShape(editor, selectedIds[0] ?? "");
   if (!selectedIds.length || !first) return null;
 
-  const props = (first.props ?? {}) as Editable;
+  // Validated, so shapes saved before a prop existed still show its control (at the default).
+  const def = shapeRegistry.get(first.type);
+  let props: Editable;
+  try {
+    props = ((def ? def.validate(first.props) : first.props) ?? {}) as Editable;
+  } catch {
+    props = (first.props ?? {}) as Editable;
+  }
   const has = (key: keyof Editable) => key in props;
   const set = (patch: Editable) => editor.setStyle(patch);
   const setLive = (patch: Editable) => editor.setStyle(patch, { transient: true });
@@ -417,6 +469,17 @@ export function StylePanel({ editor }: { editor: Editor }) {
       key={first.id}
       className="absolute top-3 left-3 max-h-[calc(100dvh-96px)] w-59 space-y-4 overflow-y-auto rounded-2xl border bg-white p-3.5 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
     >
+      {has("label") && (
+        <Section title="Label">
+          <TextField
+            key={props.label}
+            label="Label"
+            value={props.label ?? ""}
+            onCommit={(label) => set({ label })}
+          />
+        </Section>
+      )}
+
       {has("fill") && (
         <Section title="Fill">
           <div className="grid grid-cols-8 gap-1.5">
@@ -483,10 +546,67 @@ export function StylePanel({ editor }: { editor: Editor }) {
         </Section>
       )}
 
+      {has("fontFamily") && (
+        <Section title="Typeface">
+          <div className="grid gap-1 rounded-xl bg-[#f3f3f5] p-1">
+            {TEXT_FONTS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                aria-pressed={props.fontFamily === f.id}
+                onClick={() =>
+                  set({
+                    fontFamily: f.id,
+                    // Keep the weight if the new face has it, otherwise the nearest one it does.
+                    fontWeight: closestWeight(f.id, props.fontWeight ?? DEFAULT_WEIGHT),
+                  })
+                }
+                className={cn(
+                  "focus-visible:ring-primary/40 text-ink flex h-8 items-center justify-between rounded-lg px-2.5 outline-none focus-visible:ring-3",
+                  props.fontFamily === f.id ? "bg-white shadow-sm" : "hover:bg-white/60",
+                )}
+              >
+                {/* Each name is set in its own typeface, which also loads it for the canvas. */}
+                <span className="text-sm" style={{ fontFamily: fontFamily(f.id) }}>
+                  {f.label}
+                </span>
+                <span className="text-ink/40 font-mono text-[10px]">
+                  {f.weights[0]}–{f.weights[f.weights.length - 1]}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {has("fontWeight") && (
+        <Section title={`Weight · ${WEIGHT_NAMES[props.fontWeight ?? DEFAULT_WEIGHT] ?? ""}`}>
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+            {textFontById(props.fontFamily ?? "").weights.map((w) => (
+              <button
+                key={w}
+                type="button"
+                title={`${WEIGHT_NAMES[w]} (${w})`}
+                aria-label={`${WEIGHT_NAMES[w]} weight`}
+                aria-pressed={props.fontWeight === w}
+                onClick={() => set({ fontWeight: w })}
+                style={{ fontFamily: fontFamily(props.fontFamily ?? ""), fontWeight: w }}
+                className={cn(
+                  "focus-visible:ring-primary/40 text-ink grid h-7 place-items-center rounded-lg text-sm outline-none focus-visible:ring-3",
+                  props.fontWeight === w ? "bg-white shadow-sm" : "hover:bg-white/60",
+                )}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {has("fontSize") && (
         <Section title="Font size">
           <div className="flex items-center gap-1.5">
-            <div className="grid flex-1 grid-cols-4 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+            <div className="grid flex-1 grid-cols-3 gap-1 rounded-xl bg-[#f3f3f5] p-1">
               {FONT_SIZES.map((f) => (
                 <button
                   key={f.value}

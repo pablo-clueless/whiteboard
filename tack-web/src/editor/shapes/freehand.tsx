@@ -1,10 +1,10 @@
 import { getStroke } from "perfect-freehand";
-import { useMemo } from "react";
 import { Line } from "react-konva";
-
-import type { Box, ShapeDef } from "../types";
+import { useMemo } from "react";
 
 import { clamp, MAX_STROKE_WIDTH, num, str } from "./box";
+import type { Box, ShapeDef } from "../types";
+import { paint, points } from "../svg";
 
 export type FreehandProps = {
   /** Flat [x, y, pressure, x, y, pressure, …] in the shape's own space. */
@@ -19,7 +19,7 @@ export type FreehandProps = {
 const DEFAULT_FREEHAND: FreehandProps = {
   samples: [],
   stroke: "#000000",
-  strokeWidth: 4,
+  strokeWidth: 2,
   simulatePressure: true,
 };
 
@@ -101,6 +101,8 @@ export const freehandShape: ShapeDef<FreehandProps, "freehand"> = {
       },
     };
   },
+  toSvg: ({ props: p }) =>
+    `<polygon points="${points(freehandOutline(p))}" ${paint(p.stroke, null)}/>`,
   Component: function FreehandStroke({ shape }) {
     const p = shape.props;
     const outline = useMemo(() => freehandOutline(p), [p]);
