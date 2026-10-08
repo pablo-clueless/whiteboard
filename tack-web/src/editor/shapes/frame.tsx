@@ -41,11 +41,27 @@ export const frameShape: ShapeDef<FrameProps, "frame"> = {
   },
   getBounds: boxBounds,
   onResize: boxResize,
+  label: {
+    prop: "name",
+    // The label keeps a fixed size on screen, above the frame.
+    box: (shape, zoom) => {
+      const size = LABEL_SIZE / zoom;
+      return {
+        x: 0,
+        y: -(LABEL_GAP / zoom) - size * 1.2,
+        w: Math.max(shape.props.w, 120 / zoom),
+        h: size * 1.2,
+        fontSize: size,
+        fontWeight: 600,
+      };
+    },
+  },
   toSvg: ({ props: p }) =>
     `<rect width="${n(p.w)}" height="${n(p.h)}" ${paint(p.fill, "#d4d4da", 1)}/>` +
     `<text x="0" y="${-LABEL_GAP}" font-family="${esc(textFont())}" font-size="${LABEL_SIZE}" fill="#6b6b75">${esc(p.name)}</text>`,
   Component: function Frame({ shape, isSelected }) {
     const zoom = useEditorStore((s) => s.camera.zoom);
+    const editing = useEditorStore((s) => s.editingLabelId === shape.id);
     const p = shape.props;
     const label = LABEL_SIZE / zoom;
     return (
@@ -61,6 +77,7 @@ export const frameShape: ShapeDef<FrameProps, "frame"> = {
           perfectDrawEnabled={false}
         />
         <Text
+          visible={!editing}
           name="frame-label"
           // Report no size, so the resize handles hug the frame and leave the label out. (Konva
           // skips zero-size children when measuring a group; clicks still use the drawn text.)

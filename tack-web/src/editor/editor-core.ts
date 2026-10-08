@@ -78,7 +78,7 @@ type IndexItem = {
 };
 
 /** Edits to these fields can move a shape into or out of a container. */
-const GEOMETRY_KEYS = new Set(["x", "y", "rotation", "props", "type"]);
+const GEOMETRY_KEYS = new Set(["x", "y", "rotation", "props", "type", "groups"]);
 
 type ZEntry = { id: string; z: string; rank: number };
 
@@ -95,6 +95,7 @@ export function readShape(id: string, m: Y.Map<unknown>): Shape {
     locked: (m.get("locked") as boolean) ?? false,
     props: m.get("props"),
     v: (m.get("v") as number | undefined) ?? 1,
+    groups: readGroups(m.get("groups")),
   };
 }
 
@@ -102,6 +103,9 @@ export function readShape(id: string, m: Y.Map<unknown>): Shape {
  * Bottom-to-top order: containers first, then by index. Ties (two clients picking the same key
  * at once) break by id so every client agrees.
  */
+const readGroups = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((g): g is string => typeof g === "string") : [];
+
 const byZ = (a: ZEntry, b: ZEntry) =>
   a.rank - b.rank || (a.z < b.z ? -1 : a.z > b.z ? 1 : a.id < b.id ? -1 : 1);
 
@@ -331,12 +335,171 @@ export class Editor {
     for (const id of affected) {
       if (this.isContainer(id)) continue;
       const shape = this.getShape(id);
-      const b = this.getBounds(id);
+      const outer = shape?.groups?.at(-1);
+      const b = outer
+        ? unionBox(this.membersOf(outer).map((m) => this.getBounds(m)))
+        : this.getBounds(id);
       if (!shape || !b) continue;
       const parentId = this.containerAt({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
       if (parentId !== shape.parentId) patches[id] = { parentId };
     }
     if (Object.keys(patches).length) this.transact(() => this.writePatches(patches));
+  }
+
+  /**
+   * Lines and arrows have padded bounds (for arrowheads) that would snap oddly, so they're never
+   * snap targets, and are snapped by their ends' box only.
+   */
+  isLinear(id: string): boolean {
+    const type = this.getShape(id)?.type;
+    return !!type && !!shapeRegistry.get(type)?.getHandles;
+  }
+
+  /** Bounds of the shapes in view, other than `exclude`, for moves and resizes to snap to. */
+  snapTargets(exclude: Iterable<string>): Box[] {
+    const skip = new Set(exclude);
+    const { camera } = this.ui;
+    const view = {
+      x: -camera.x / camera.zoom,
+      y: -camera.y / camera.zoom,
+      w: (this.stage?.width() ?? window.innerWidth) / camera.zoom,
+      h: (this.stage?.height() ?? window.innerHeight) / camera.zoom,
+    };
+    return this.shapesInBox(view)
+      .filter((id) => !skip.has(id) && !this.isLinear(id))
+      .map((id) => this.getBounds(id))
+      .filter((b): b is Box => !!b);
+  }
+
+  /* ── Groups ─────────────────────────────────────────────────────────── */
+
+  groupsOf(id: string): string[] {
+    return readGroups(this.board.shapes.get(id)?.get("groups"));
+  }
+
+  /** Every shape in a group (including its subgroups). */
+  membersOf(groupId: string): string[] {
+    const out: string[] = [];
+    this.board.shapes.forEach((m, id) => {
+      if (readGroups(m.get("groups")).includes(groupId)) out.push(id);
+    });
+    return out;
+  }
+
+  /** A group and the groups around it, innermost first, as a member would store them. */
+  private groupPath(groupId: string): string[] {
+    const member = this.membersOf(groupId)[0];
+    const groups = member ? this.groupsOf(member) : [];
+    const i = groups.indexOf(groupId);
+    return i >= 0 ? groups.slice(i) : [groupId];
+  }
+
+  /**
+   * The group a click on `id` picks: its outermost group, or, inside a group you've
+   * double-clicked into, its outermost group within that one. Null when it picks the shape alone.
+   */
+  unitGroup(id: string): string | null {
+    let groups = this.groupsOf(id);
+    const editing = this.ui.editingGroupId;
+    if (editing) {
+      const i = groups.indexOf(editing);
+      if (i >= 0) groups = groups.slice(0, i);
+    }
+    return groups.at(-1) ?? null;
+  }
+
+  /** What a click on `id` selects: its group's shapes, or just it. */
+  unitOf(id: string): string[] {
+    const g = this.unitGroup(id);
+    return g ? this.membersOf(g) : [id];
+  }
+
+  /** `ids` widened to whole groups, as clicks and box selection pick them. */
+  expandToUnits(ids: string[]): string[] {
+    const out = new Set<string>();
+    const done = new Set<string>();
+    for (const id of ids) {
+      const g = this.unitGroup(id);
+      if (!g) out.add(id);
+      else if (!done.has(g)) {
+        done.add(g);
+        this.membersOf(g).forEach((m) => out.add(m));
+      }
+    }
+    return [...out];
+  }
+
+  /** The whole groups among `ids` (at the current level). */
+  groupsIn(ids: string[]): string[] {
+    const selected = new Set(ids);
+    const found = new Set<string>();
+    for (const id of ids) {
+      const g = this.unitGroup(id);
+      if (g && this.membersOf(g).every((m) => selected.has(m))) found.add(g);
+    }
+    return [...found];
+  }
+
+  /** How many separately selectable things `ids` covers: whole groups count once. */
+  unitCount(ids: string[]): number {
+    const units = new Set(ids.map((id) => this.unitGroup(id) ?? id));
+    return units.size;
+  }
+
+  /**
+   * Puts `ids` (whole groups, as selected) in a new group, as one undo step. Inside a group
+   * you've double-clicked into, the new group nests in it. Returns the group id.
+   */
+  group(ids: string[]): string | null {
+    if (this.readOnly || this.unitCount(ids) < 2) return null;
+    const id = crypto.randomUUID();
+    const editing = this.ui.editingGroupId;
+    const patches: Record<string, ShapePatch> = {};
+    for (const member of this.expandToUnits(ids)) {
+      const groups = this.groupsOf(member);
+      // Just inside the group being edited (or outermost), so it wraps the selected groups.
+      const at = editing && groups.includes(editing) ? groups.indexOf(editing) : groups.length;
+      patches[member] = { groups: [...groups.slice(0, at), id, ...groups.slice(at)] };
+    }
+    this.markHistory();
+    this.updateShapes(patches);
+    this.markHistory();
+    return id;
+  }
+
+  /** Splits the whole groups among `ids` back into their parts, as one undo step. */
+  ungroup(ids: string[]): boolean {
+    const groups = this.groupsIn(ids);
+    if (this.readOnly || !groups.length) return false;
+    const gone = new Set(groups);
+    const patches: Record<string, ShapePatch> = {};
+    for (const g of groups) {
+      for (const member of this.membersOf(g)) {
+        patches[member] = { groups: this.groupsOf(member).filter((x) => !gone.has(x)) };
+      }
+    }
+    this.markHistory();
+    this.updateShapes(patches);
+    this.markHistory();
+    return true;
+  }
+
+  /** Drops groups that have fewer than two shapes left (after a delete or a cut). */
+  private dissolveSingletons() {
+    const counts = new Map<string, number>();
+    this.board.shapes.forEach((m) => {
+      for (const g of readGroups(m.get("groups"))) counts.set(g, (counts.get(g) ?? 0) + 1);
+    });
+    const lonely = new Set([...counts].filter(([, n]) => n < 2).map(([g]) => g));
+    if (!lonely.size) return;
+    this.board.shapes.forEach((m) => {
+      const groups = readGroups(m.get("groups"));
+      if (groups.some((g) => lonely.has(g)))
+        m.set(
+          "groups",
+          groups.filter((g) => !lonely.has(g)),
+        );
+    });
   }
 
   /** The Konva node drawing a shape, for imperative updates during gestures. */
@@ -424,6 +587,8 @@ export class Editor {
       index: generateKeyBetween(top, null),
       // Stamped so a later version of this shape knows which migrations it still needs.
       v: def?.version ?? 1,
+      // Drawn inside a group you've double-clicked into: it joins that group.
+      ...(this.ui.editingGroupId ? { groups: this.groupPath(this.ui.editingGroupId) } : {}),
       ...rest,
       props: { ...base, ...(preset as Record<string, unknown> | undefined) },
     };
@@ -663,6 +828,7 @@ export class Editor {
         if (gone.has(binding.arrowId) || gone.has(binding.toId)) stale.push(key);
       });
       stale.forEach((key) => this.board.bindings.delete(key));
+      this.dissolveSingletons();
     });
     this.select(this.ui.selectedIds.filter((id) => !ids.includes(id)));
   }
@@ -948,6 +1114,13 @@ export class Editor {
       return null;
     }
     const newIds = new Map(data.shapes.map((s) => [s.id, crypto.randomUUID()]));
+    // Pasted shapes form their own groups, separate from the ones they were copied from.
+    const newGroups = new Map<string, string>();
+    const regroup = (groups: unknown) =>
+      readGroups(groups).map((g) => {
+        if (!newGroups.has(g)) newGroups.set(g, crypto.randomUUID());
+        return newGroups.get(g)!;
+      });
     const ids = this.sortedIds();
     let below = ids.length ? this.getShape(ids[ids.length - 1])!.index : null;
 
@@ -962,6 +1135,7 @@ export class Editor {
           y: (shape.y ?? 0) + offset.y,
           index: below,
           parentId: shape.parentId ? (newIds.get(shape.parentId) ?? null) : null,
+          groups: regroup(shape.groups),
         };
         this.board.shapes.set(newIds.get(id)!, new Y.Map(Object.entries(record)));
       }
@@ -976,6 +1150,69 @@ export class Editor {
     const pasted = [...newIds.values()].filter((id) => this.board.shapes.has(id));
     this.select(pasted);
     return pasted;
+  }
+
+  /** What this tab last copied, for pasting when the system clipboard can't be read. */
+  private lastCopied = "";
+  /** Pasting the same copy again cascades instead of stacking exactly on the last paste. */
+  private pasteRun = { text: "", pastes: 0 };
+
+  /** Records a copy (or cut). After a cut, the first paste goes back where the shapes were. */
+  noteCopied(text: string, { cut = false }: { cut?: boolean } = {}) {
+    this.lastCopied = text;
+    this.pasteRun = { text, pastes: cut ? 0 : 1 };
+  }
+
+  /** Pastes clipboard text, cascading repeat pastes. Null if it isn't Tack shapes. */
+  pasteText(text: string): string[] | null {
+    if (text !== this.pasteRun.text) this.pasteRun = { text, pastes: 1 };
+    const nudge = this.pasteRun.pastes * PASTE_NUDGE;
+    const ids = this.pasteSerialized(text, { x: nudge, y: nudge });
+    if (ids) this.pasteRun.pastes++;
+    return ids;
+  }
+
+  /** Copies (or cuts) shapes to the system clipboard, for menus rather than key presses. */
+  async copy(ids: string[], { cut = false }: { cut?: boolean } = {}) {
+    const text = this.serialize(ids);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // No clipboard access: pasting in this tab still works from `lastCopied`.
+    }
+    this.noteCopied(text, { cut });
+    if (cut && !this.readOnly) {
+      this.markHistory();
+      this.deleteShapes(this.unlocked(ids));
+    }
+  }
+
+  /** Pastes from the system clipboard if it holds Tack shapes, else what this tab last copied. */
+  async paste() {
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      // Clipboard reads need permission; fall back to this tab's copy.
+    }
+    if (!text.startsWith(CLIPBOARD_PREFIX)) text = this.lastCopied;
+    if (text) this.pasteText(text);
+  }
+
+  /** The shapes among `ids` that aren't locked. Locked shapes can't be moved, edited or deleted. */
+  unlocked(ids: string[]): string[] {
+    return ids.filter((id) => {
+      const s = this.getShape(id);
+      return s && !s.locked;
+    });
+  }
+
+  /** Locks or unlocks shapes, as one undo step. */
+  setLocked(ids: string[], locked: boolean) {
+    this.markHistory();
+    this.updateShapes(Object.fromEntries(ids.map((id) => [id, { locked }])));
+    this.markHistory();
   }
 
   /** Copies the shapes and pastes them a little down and to the right. */
@@ -1043,6 +1280,8 @@ export type ShapeKnobs = {
   fontWeight: number;
   /** A shape's visible name, e.g. a component card's. */
   label: string;
+  /** Which look a shape with `variants` uses. */
+  variant: string;
   arrowStart: boolean;
   arrowEnd: boolean;
   route: "elbow" | "straight";

@@ -4,7 +4,6 @@ import { boxFromPoints, distance, unionBox } from "../geometry";
 import type { Box, Tool, ToolEvent, Vec } from "../types";
 import { arrowTool, startArrowFrom } from "./line-tools";
 import { SNAP_DISTANCE, snapBox } from "../snapping";
-import { shapeRegistry } from "../shapes/registry";
 import type { Editor } from "../editor-core";
 
 /** Screen pixels the pointer must travel before a press becomes a drag. */
@@ -53,30 +52,16 @@ function beginDrag(editor: Editor, start: Vec) {
   state = { kind: "dragging", start, origins, ...snapSetup(editor, [...origins.keys()]) };
 }
 
-/** Lines and arrows have padded bounds that would snap oddly; snap by their ends' box only. */
-const isLinear = (editor: Editor, id: string) => {
-  const type = editor.getShape(id)?.type;
-  return !!type && !!shapeRegistry.get(type)?.getHandles;
-};
+/** Clicking a shape outside the group you've double-clicked into leaves that group. */
+function leaveGroupUnlessInside(editor: Editor, id: string) {
+  const editing = editor.ui.editingGroupId;
+  if (editing && !editor.groupsOf(id).includes(editing)) editor.ui.setEditingGroup(null);
+}
 
 function snapSetup(editor: Editor, moving: string[]) {
-  const movingSet = new Set(moving);
-  const solid = moving.filter((id) => !isLinear(editor, id));
+  const solid = moving.filter((id) => !editor.isLinear(id));
   const box = unionBox((solid.length ? solid : moving).map((id) => editor.getBounds(id)));
-  const { camera } = editor.ui;
-  const stage = editor.stage;
-  const view = {
-    x: -camera.x / camera.zoom,
-    y: -camera.y / camera.zoom,
-    w: (stage?.width() ?? window.innerWidth) / camera.zoom,
-    h: (stage?.height() ?? window.innerHeight) / camera.zoom,
-  };
-  const targets = editor
-    .shapesInBox(view)
-    .filter((id) => !movingSet.has(id) && !isLinear(editor, id))
-    .map((id) => editor.getBounds(id))
-    .filter((b): b is Box => !!b);
-  return { box, targets };
+  return { box, targets: editor.snapTargets(moving) };
 }
 
 function moveTo(editor: Editor, origins: Map<string, Vec>, dx: number, dy: number) {
@@ -115,18 +100,28 @@ export const selectTool: Tool = {
     }
     if (e.targetId) {
       const id = e.targetId;
+      leaveGroupUnlessInside(editor, id);
+      // A click picks the shape's whole group (or, inside an entered group, its subgroup).
+      const unit = editor.unitOf(id);
+      const picked = unit.every((u) => selectedIds.includes(u));
       if (e.shiftKey) {
         editor.select(
-          selectedIds.includes(id) ? selectedIds.filter((s) => s !== id) : [...selectedIds, id],
+          picked
+            ? selectedIds.filter((s) => !unit.includes(s))
+            : [...new Set([...selectedIds, ...unit])],
         );
-      } else if (!selectedIds.includes(id)) {
-        editor.select([id]);
+      } else if (!picked) {
+        editor.select(unit);
       }
       state = { kind: "pointing", start: e.point, screen: e.screen, targetId: id };
       return;
     }
     const base = e.shiftKey ? selectedIds : [];
-    if (!e.shiftKey) editor.select([]);
+    if (!e.shiftKey) {
+      editor.select([]);
+      // Pressing empty board leaves an entered group.
+      editor.ui.setEditingGroup(null);
+    }
     state = { kind: "brushing", start: e.point, base };
   },
 
@@ -139,9 +134,9 @@ export const selectTool: Tool = {
         return;
       case "pointing":
         if (distance(state.screen, e.screen) < DRAG_THRESHOLD) return;
-        // Shift-clicking a selected shape deselects it; dragging it should still move the group.
+        // Shift-clicking a selected shape deselects it; dragging it should still move it.
         if (!editor.ui.selectedIds.includes(state.targetId)) {
-          editor.select([...editor.ui.selectedIds, state.targetId]);
+          editor.select([...new Set([...editor.ui.selectedIds, ...editor.unitOf(state.targetId)])]);
         }
         beginDrag(editor, state.start);
         selectTool.onPointerMove!(e, editor);
@@ -178,7 +173,10 @@ export const selectTool: Tool = {
             b.y + b.h <= brush.y + brush.h
           );
         });
-        editor.select([...new Set([...state.base, ...hits])]);
+        // Inside an entered group, only its shapes can be picked; groups come whole.
+        const editing = editor.ui.editingGroupId;
+        const inScope = editing ? hits.filter((id) => editor.groupsOf(id).includes(editing)) : hits;
+        editor.select([...new Set([...state.base, ...editor.expandToUnits(inScope)])]);
         return;
       }
     }
