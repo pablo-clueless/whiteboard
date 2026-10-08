@@ -24,9 +24,25 @@ export type Shape<P = unknown, T extends string = string> = {
   props: P;
   /** Version of `props`, from the ShapeDef that wrote them. Missing means 1. */
   v?: number;
+  /**
+   * Groups the shape belongs to, innermost first. Shapes sharing an id select and move as one;
+   * a group inside another is a shorter prefix shared by fewer shapes. Missing means none.
+   */
+  groups?: string[];
 };
 
 export type Handle = { id: string; point: Vec };
+
+/** Where a shape draws its name, in its own space, so it can be edited in place. */
+export type LabelBox = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSize: number;
+  fontWeight?: number;
+  align?: "left" | "center";
+};
 
 export type ResizeInfo = {
   /** Scale relative to the shape's state when the resize started. */
@@ -67,6 +83,17 @@ export type ShapeDef<P = unknown, T extends string = string> = {
    */
   getOutline?: (shape: Shape<P, T>) => Vec[];
   toSvg?: (shape: Shape<P, T>) => string;
+  /**
+   * A name shown on the shape that double-clicking edits in place: which string prop holds it,
+   * and where it's drawn (`zoom` for labels that keep a fixed size on screen). The shape should
+   * hide its own copy while `editingLabelId` is its id.
+   */
+  label?: { prop: string; box: (shape: Shape<P, T>, zoom: number) => LabelBox };
+  /**
+   * Looks the shape can switch between, stored in its `variant` prop. The style panel offers
+   * them, and switching resets the shape to that look's size.
+   */
+  variants?: { id: string; label: string; size?: { w: number; h: number } }[];
   /** Ordered: `migrations[n]` upgrades props from version n to n + 1. */
   migrations: ((props: unknown) => unknown)[];
 };

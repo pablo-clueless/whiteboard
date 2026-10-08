@@ -15,6 +15,10 @@ type EditorState = {
   selectedIds: string[];
   hoveredId: string | null;
   editingTextId: string | null;
+  /** Shape whose name (its ShapeDef `label`) is being edited in place. */
+  editingLabelId: string | null;
+  /** The group double-clicked into: clicks select what's inside it rather than the whole group. */
+  editingGroupId: string | null;
   camera: Camera;
   /** Box-select rectangle in page space while dragging one out. */
   brush: Box | null;
@@ -35,6 +39,8 @@ type EditorState = {
   setSelection: (ids: string[]) => void;
   setHovered: (id: string | null) => void;
   setEditingText: (id: string | null) => void;
+  setEditingLabel: (id: string | null) => void;
+  setEditingGroup: (id: string | null) => void;
   setCamera: (camera: Camera) => void;
   setBrush: (brush: Box | null) => void;
   setExporting: (ids: string[] | null) => void;
@@ -53,6 +59,8 @@ export const useEditorStore = create<EditorState>()((set) => ({
   selectedIds: [],
   hoveredId: null,
   editingTextId: null,
+  editingLabelId: null,
+  editingGroupId: null,
   camera: { x: 0, y: 0, zoom: 1 },
   brush: null,
   exporting: null,
@@ -66,6 +74,8 @@ export const useEditorStore = create<EditorState>()((set) => ({
   setSelection: (selectedIds) => set({ selectedIds }),
   setHovered: (hoveredId) => set({ hoveredId }),
   setEditingText: (editingTextId) => set({ editingTextId }),
+  setEditingLabel: (editingLabelId) => set({ editingLabelId }),
+  setEditingGroup: (editingGroupId) => set({ editingGroupId }),
   setCamera: (camera) => set({ camera }),
   setBrush: (brush) => set({ brush }),
   setExporting: (exporting) => set({ exporting }),

@@ -17,6 +17,32 @@ function download(blob: Blob, name: string) {
 
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
 
+/** Exports the board, or the selection, and downloads it. Problems are shown as notices. */
+export async function exportToFile(editor: Editor, selectionOnly: boolean, format: "png" | "svg") {
+  try {
+    const ids = selectionOnly ? editor.ui.selectedIds : undefined;
+    let blob: Blob | null = null;
+    if (format === "png") {
+      blob = await editor.exportPng(ids);
+    } else {
+      const result = await editor.exportSvg(ids);
+      blob = result?.blob ?? null;
+      if (result?.skipped)
+        editor.notify(
+          `${result.skipped} shape${result.skipped === 1 ? "" : "s"} can't be drawn as SVG and ${result.skipped === 1 ? "was" : "were"} left out.`,
+          "info",
+        );
+    }
+    if (!blob) {
+      editor.notify("There's nothing on the board to export yet.", "info");
+      return;
+    }
+    download(blob, `tack-${selectionOnly ? "selection" : "board"}-${stamp()}.${format}`);
+  } catch {
+    editor.notify("Couldn't export. Try again.", "error");
+  }
+}
+
 /** Exports the board, or just the selection, as a PNG at 2× resolution or as an SVG. */
 export function ExportMenu({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false);
@@ -48,26 +74,7 @@ export function ExportMenu({ editor }: { editor: Editor }) {
     setOpen(false);
     setBusy(true);
     try {
-      const ids = selectionOnly ? editor.ui.selectedIds : undefined;
-      let blob: Blob | null = null;
-      if (format === "png") {
-        blob = await editor.exportPng(ids);
-      } else {
-        const result = await editor.exportSvg(ids);
-        blob = result?.blob ?? null;
-        if (result?.skipped)
-          editor.notify(
-            `${result.skipped} shape${result.skipped === 1 ? "" : "s"} can't be drawn as SVG and ${result.skipped === 1 ? "was" : "were"} left out.`,
-            "info",
-          );
-      }
-      if (!blob) {
-        editor.notify("There's nothing on the board to export yet.", "info");
-        return;
-      }
-      download(blob, `tack-${selectionOnly ? "selection" : "board"}-${stamp()}.${format}`);
-    } catch {
-      editor.notify("Couldn't export. Try again.", "error");
+      await exportToFile(editor, selectionOnly, format);
     } finally {
       setBusy(false);
     }

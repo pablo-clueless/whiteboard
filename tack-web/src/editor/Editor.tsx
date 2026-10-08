@@ -17,7 +17,7 @@ import {
 } from "./sync/useBoard";
 import { COMPONENT_DRAG_TYPE, type ComponentRef } from "./component-catalog";
 import { ComponentGroup, insertComponent } from "./ComponentGroup";
-import { Editor as EditorApi, PASTE_NUDGE } from "./editor-core";
+import { Editor as EditorApi } from "./editor-core";
 import { Toolbar, ZoomControls } from "./Toolbar";
 import { usePresencePublisher } from "./Presence";
 import { Toaster } from "@/components/ui/sonner";
@@ -25,6 +25,8 @@ import type { BoardDoc } from "./sync/board-doc";
 import { screenToPage, useEditorStore } from "@/stores/editor";
 import { useMigrations } from "./sync/useMigrations";
 import { ShortcutsDialog } from "./ShortcutsDialog";
+import { CanvasMenu } from "./CanvasMenu";
+import { LabelEditor } from "./LabelEditor";
 import { ShareDialog } from "./ShareDialog";
 import { api, type Role } from "@/lib/api";
 import { ExportMenu } from "./ExportMenu";
@@ -106,8 +108,6 @@ function BoardEditor({
 
   // Copy, cut and paste shapes; paste images from the clipboard into the middle of the screen.
   useEffect(() => {
-    // Pasting the same copy again cascades instead of stacking exactly on the last paste.
-    let last = { text: "", pastes: 0 };
     const isField = (t: EventTarget | null) => {
       const el = t as HTMLElement | null;
       return !!el && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA");
@@ -120,24 +120,18 @@ function BoardEditor({
       if (!text) return;
       e.preventDefault();
       e.clipboardData.setData("text/plain", text);
-      // After a cut the first paste goes back exactly where the shapes were.
-      last = { text, pastes: cut ? 0 : 1 };
+      editor.noteCopied(text, { cut });
       if (cut && !editor.readOnly) {
         editor.markHistory();
-        editor.deleteShapes(ids);
+        editor.deleteShapes(editor.unlocked(ids));
       }
     };
     const onPaste = (e: ClipboardEvent) => {
       if (editor.readOnly || isField(e.target) || !e.clipboardData) return;
       const text = e.clipboardData.getData("text/plain");
-      if (text) {
-        if (text !== last.text) last = { text, pastes: 1 };
-        const nudge = last.pastes * PASTE_NUDGE;
-        if (editor.pasteSerialized(text, { x: nudge, y: nudge })) {
-          e.preventDefault();
-          last.pastes++;
-          return;
-        }
+      if (text && editor.pasteText(text)) {
+        e.preventDefault();
+        return;
       }
       const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
       if (!files.length) return;
@@ -191,8 +185,11 @@ function BoardEditor({
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      <Canvas editor={editor} awareness={provider.awareness} />
+      <CanvasMenu editor={editor}>
+        <Canvas editor={editor} awareness={provider.awareness} />
+      </CanvasMenu>
       <TextEditor editor={editor} />
+      <LabelEditor editor={editor} />
       <Toolbar editor={editor} />
       <ComponentGroup editor={editor} />
       {!editor.readOnly && <StylePanel editor={editor} />}

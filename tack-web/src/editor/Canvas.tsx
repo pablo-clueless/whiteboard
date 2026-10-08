@@ -1,14 +1,16 @@
 "use client";
 
 import { Circle, Group, Layer, Line, Rect, Stage, Transformer } from "react-konva";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Awareness } from "y-protocols/awareness";
 import Konva from "konva";
 
 import { useFrozenShape, useShape, useVisibleShapeIds } from "./sync/useShapes";
-import { screenToPage, useEditorStore, zoomAt } from "@/stores/editor";
-import type { Shape, Tool, ToolEvent, Vec } from "./types";
+import { pageToScreen, screenToPage, useEditorStore, zoomAt } from "@/stores/editor";
+import type { Box, Shape, Tool, ToolEvent, Vec } from "./types";
+import { SNAP_DISTANCE, snapPoint } from "./snapping";
+import { unionBox } from "./geometry";
 import { type Terminal, toPage } from "./bindings";
 import { shapeRegistry } from "./shapes/registry";
 import { toolRegistry } from "./tools/registry";
@@ -17,6 +19,8 @@ import { RemotePresence } from "./Presence";
 import { handTool } from "./tools/hand";
 
 const SELECTION_BLUE = "#3366ff";
+/** Gap (screen pixels) between a selected shape and its resize box. */
+const TRANSFORM_PAD = 4;
 /** Arrow-key nudge distances, in page units. */
 const NUDGE = 1;
 const NUDGE_BIG = 10;
@@ -99,6 +103,7 @@ export function Canvas({ editor, awareness }: { editor: Editor; awareness: Aware
             <EndpointHandles editor={editor} />
             <Brush />
             <Guides />
+            <EditingGroupOutline editor={editor} />
             <ConnectionPorts editor={editor} />
           </Layer>
           <Layer name="presence" listening={false}>
@@ -204,14 +209,35 @@ function useCanvasInput(editor: Editor, toolId: string) {
       if (!gesture.current) currentTool().onHover?.(null, editor);
     },
     onDblClick(e: KonvaEventObject<MouseEvent>) {
-      // Double-click text to edit it.
+      // Double-click text to edit it, or a named shape (a card, a frame) to rename it.
       if (editor.readOnly) return;
       const id = e.target.findAncestor(".shape", true)?.id();
-      if (id && editor.getShape(id)?.type === "text") {
+      const shape = id ? editor.getShape(id) : null;
+      if (!id || !shape) return;
+      // Double-clicking a grouped shape steps into its group, one level per double-click.
+      const group = editor.unitGroup(id);
+      if (group) {
+        editor.ui.setEditingGroup(group);
+        editor.select(editor.unitOf(id));
+        return;
+      }
+      if (shape.locked) return;
+      if (shape.type === "text") {
         editor.startGesture(); // the text editor ends it
         editor.select([id]);
         editor.ui.setEditingText(id);
+      } else if (shapeRegistry.get(shape.type)?.label) {
+        editor.startGesture(); // the label editor ends it
+        editor.select([id]);
+        editor.ui.setEditingLabel(id);
       }
+    },
+    onContextMenu(e: KonvaEventObject<PointerEvent>) {
+      // The menu acts on the selection: right-clicking a shape outside it selects just that
+      // shape, and right-clicking empty board clears it. (The menu itself opens from the DOM.)
+      const id = e.target.findAncestor(".shape", true)?.id() || null;
+      if (!id) editor.select([]);
+      else if (!editor.ui.selectedIds.includes(id)) editor.select(editor.unitOf(id));
     },
     onWheel(e: KonvaEventObject<WheelEvent>) {
       e.evt.preventDefault();
@@ -252,6 +278,15 @@ function useCanvasInput(editor: Editor, toolId: string) {
       } else if (mod && key === "a") {
         e.preventDefault();
         editor.select(editor.sortedIds());
+      } else if (mod && key === "g") {
+        // Group, or with Shift ungroup (rather than the browser's find-next).
+        e.preventDefault();
+        if (e.shiftKey) {
+          const parts = selectedIds;
+          if (editor.ungroup(parts)) editor.select(editor.expandToUnits(parts));
+        } else if (editor.group(selectedIds)) {
+          editor.select(editor.expandToUnits(selectedIds));
+        }
       } else if (mod && key === "d") {
         // Duplicate, rather than the browser's bookmark shortcut.
         e.preventDefault();
@@ -260,10 +295,15 @@ function useCanvasInput(editor: Editor, toolId: string) {
         if (!selectedIds.length) return;
         e.preventDefault();
         editor.markHistory();
-        editor.deleteShapes(selectedIds);
+        editor.deleteShapes(editor.unlocked(selectedIds));
       } else if (e.key === "Escape") {
         latest.current.cancelGesture();
-        editor.select([]);
+        // Inside a group, Escape steps out and selects the group; otherwise it deselects.
+        const editing = editor.ui.editingGroupId;
+        if (editing) {
+          editor.ui.setEditingGroup(null);
+          editor.select(editor.unitOf(editor.membersOf(editing)[0] ?? ""));
+        } else editor.select([]);
         editor.setTool("select");
       } else if (e.key === " ") {
         e.preventDefault();
@@ -375,6 +415,7 @@ function SelectionHandles({
   const selectedIds = useEditorStore((s) => s.selectedIds);
   const ids = useVisibleShapeIds(editor, width, height);
 
+  const anyLocked = selectedIds.some((id) => editor.getShape(id)?.locked);
   const resizable = selectedIds.every((id) => {
     const s = editor.getShape(id);
     return s && !s.locked && shapeRegistry.get(s.type)?.onResize;
@@ -424,12 +465,41 @@ function SelectionHandles({
     return patches;
   };
 
+  // What the dragged handle can snap to, fixed when the resize starts.
+  const snapTargets = useRef<Box[] | null>(null);
+
   const onTransformStart = () => {
     editor.startGesture();
-    editor.freeze(trRef.current?.nodes().map((n) => n.id()) ?? []);
+    const ids = trRef.current?.nodes().map((n) => n.id()) ?? [];
+    editor.freeze(ids);
+    snapTargets.current = editor.snapTargets(ids);
   };
 
-  // Others see the resize live; locally Konva is already showing it.
+  /**
+   * Snaps the edge being dragged to other shapes' edges and centres. (Konva places the edge at
+   * the position returned here; the resize box's padding is added on top.) Rotated shapes don't
+   * snap, since their edges aren't axis-aligned, and Alt resizes freely.
+   */
+  const snapHandle = (pos: Vec, evt: unknown): Vec => {
+    const tr = trRef.current;
+    const anchor = tr?.getActiveAnchor() ?? "";
+    const targets = snapTargets.current;
+    const rotated = tr?.nodes().some((n) => Math.abs(n.rotation() % 360) > 0.01);
+    if (!tr || !targets || anchor === "rotater" || rotated || (evt as MouseEvent)?.altKey) {
+      editor.ui.setGuides([]);
+      return pos;
+    }
+    const { camera } = editor.ui;
+    const { point, guides } = snapPoint(
+      screenToPage(pos, camera),
+      targets,
+      SNAP_DISTANCE / camera.zoom,
+      { x: /left|right/.test(anchor), y: /top|bottom/.test(anchor) },
+    );
+    editor.ui.setGuides(guides);
+    return pageToScreen(point, camera);
+  };
+
   const onTransform = () => {
     const patches = transformedPatches();
     editor.writeEachFrame(() => editor.updateShapes(patches));
@@ -443,12 +513,14 @@ function SelectionHandles({
     for (const node of trRef.current?.nodes() ?? []) node.scale({ x: 1, y: 1 });
     editor.unfreeze();
     editor.endGesture();
+    snapTargets.current = null;
+    editor.ui.setGuides([]);
   };
   return (
     <Transformer
       ref={trRef}
       resizeEnabled={resizable && !editor.readOnly}
-      rotateEnabled={!editor.readOnly}
+      rotateEnabled={!editor.readOnly && !anyLocked}
       keepRatio={false}
       flipEnabled={false}
       ignoreStroke
@@ -461,7 +533,8 @@ function SelectionHandles({
       anchorStrokeWidth={1.5}
       borderStroke={SELECTION_BLUE}
       borderStrokeWidth={1.5}
-      padding={4}
+      padding={TRANSFORM_PAD}
+      anchorDragBoundFunc={(_old, pos, evt) => snapHandle(pos, evt)}
       boundBoxFunc={(oldBox, newBox) => (newBox.width < 4 || newBox.height < 4 ? oldBox : newBox)}
       onTransformStart={onTransformStart}
       onTransform={onTransform}
@@ -627,28 +700,79 @@ function ConnectionPorts({ editor }: { editor: Editor }) {
   });
 }
 
+/** A dashed box round the group you've double-clicked into, so it's clear where you are. */
+function EditingGroupOutline({ editor }: { editor: Editor }) {
+  const editing = useEditorStore((s) => s.editingGroupId);
+  const zoom = useEditorStore((s) => s.camera.zoom);
+  // Follow the group's shapes as they move.
+  useSyncExternalStore(
+    (onChange) => editor.indexChanged.subscribe(onChange),
+    () => editor.indexVersion,
+  );
+  if (!editing) return null;
+  const box = unionBox(editor.membersOf(editing).map((id) => editor.getBounds(id)));
+  if (!box) return null;
+  const pad = 8 / zoom;
+  return (
+    <Rect
+      x={box.x - pad}
+      y={box.y - pad}
+      width={box.w + pad * 2}
+      height={box.h + pad * 2}
+      stroke="#8a8a93"
+      strokeWidth={1 / zoom}
+      dash={[5 / zoom, 4 / zoom]}
+      cornerRadius={6 / zoom}
+      listening={false}
+    />
+  );
+}
+
 const GUIDE_COLOR = "#ff3d7f";
 
 /** Alignment guides while a dragged shape is snapped to others. */
 function Guides() {
   const guides = useEditorStore((s) => s.guides);
   const zoom = useEditorStore((s) => s.camera.zoom);
-  // Run a little past the shapes at each end, a fixed distance on screen.
+  // Lines run a little past the shapes at each end; gap ticks are a fixed size on screen.
   const overhang = 8 / zoom;
-  return guides.map((g, i) => (
-    <Line
-      key={i}
-      points={
-        g.axis === "x"
-          ? [g.at, g.from - overhang, g.at, g.to + overhang]
-          : [g.from - overhang, g.at, g.to + overhang, g.at]
-      }
-      stroke={GUIDE_COLOR}
-      strokeWidth={1 / zoom}
-      dash={[4 / zoom, 3 / zoom]}
-      listening={false}
-    />
-  ));
+  const tick = 5 / zoom;
+  return guides.map((g, i) => {
+    const along = (a: number, b: number, across: number) =>
+      g.axis === "x" ? [a, across, b, across] : [across, a, across, b];
+    if (g.kind === "gap") {
+      // A measurement across the gap: a solid line with a tick at each end.
+      return (
+        <Group key={i} listening={false}>
+          <Line points={along(g.from, g.to, g.at)} stroke={GUIDE_COLOR} strokeWidth={1 / zoom} />
+          {[g.from, g.to].map((v) => (
+            <Line
+              key={v}
+              points={
+                g.axis === "x" ? [v, g.at - tick, v, g.at + tick] : [g.at - tick, v, g.at + tick, v]
+              }
+              stroke={GUIDE_COLOR}
+              strokeWidth={1 / zoom}
+            />
+          ))}
+        </Group>
+      );
+    }
+    return (
+      <Line
+        key={i}
+        points={
+          g.axis === "x"
+            ? [g.at, g.from - overhang, g.at, g.to + overhang]
+            : [g.from - overhang, g.at, g.to + overhang, g.at]
+        }
+        stroke={GUIDE_COLOR}
+        strokeWidth={1 / zoom}
+        dash={[4 / zoom, 3 / zoom]}
+        listening={false}
+      />
+    );
+  });
 }
 
 function useWindowSize() {
