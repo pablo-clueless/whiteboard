@@ -5,8 +5,8 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
 const URL = process.env.TACK_WS_URL ?? "ws://localhost:8080/ws/boards";
-const API = process.env.TACK_API_URL ?? "http://localhost:8080";
 const ORIGIN = process.env.TACK_ORIGIN ?? "http://localhost:3000";
+const API = process.env.TACK_API_URL ?? "http://localhost:8080";
 const SECONDS = Number(process.env.SECONDS ?? 40);
 
 const { boardId, editToken } = await fetch(`${API}/api/boards`, { method: "POST" }).then((r) =>

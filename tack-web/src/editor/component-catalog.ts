@@ -10,6 +10,8 @@ export type ComponentItem = {
   color?: string;
   /** Extra words to match when searching, e.g. "functions serverless" for Lambda. */
   keywords?: string;
+  /** Shown under the name on cards. Defaults to the provider's name. */
+  caption?: string;
 };
 
 /** A group of components in the side panel, with its own logo and colour. */
@@ -36,6 +38,11 @@ let snapshot: ComponentProvider[] = [];
 export const componentCatalog = {
   register(provider: ComponentProvider) {
     providers.set(provider.id, provider);
+    snapshot = [...providers.values()];
+    listeners.forEach((fn) => fn());
+  },
+  unregister(id: string) {
+    if (!providers.delete(id)) return;
     snapshot = [...providers.values()];
     listeners.forEach((fn) => fn());
   },

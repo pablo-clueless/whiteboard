@@ -1,19 +1,24 @@
-import { Circle, Ellipse, Group, Line, Path, Rect, Text } from "react-konva";
+import { Circle, Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from "react-konva";
 import type { IconNode } from "lucide";
 
+import { useAssetImage } from "./shapes/image";
+import { assetUrl } from "@/lib/api";
 import { esc, n } from "./svg";
 
 /**
  * An icon drawn as vectors on a 24×24 grid, so it stays sharp at any zoom and exports to SVG as
- * is. Three kinds:
+ * is. Four kinds:
  * - `brand`: a filled logo path (simple-icons, CC0) with the brand's own colour.
  * - `glyph`: a stroked line icon (lucide, ISC), drawn in whatever colour it's given.
  * - `monogram`: a short word, for brands whose logos we don't ship.
+ * - `image`: an uploaded picture (a custom component's logo), fitted into the square. The only
+ *   kind that isn't vector, and colour doesn't apply to it.
  */
 export type IconSpec =
   | { kind: "brand"; path: string; hex: string }
   | { kind: "glyph"; node: IconNode }
-  | { kind: "monogram"; text: string };
+  | { kind: "monogram"; text: string }
+  | { kind: "image"; assetId: string };
 
 /** A simple-icons entry as an IconSpec. */
 export const brand = (si: { path: string; hex: string }): IconSpec => ({
@@ -89,6 +94,8 @@ export function KonvaIcon({
   size: number;
 }) {
   const scale = size / 24;
+  if (icon.kind === "image")
+    return <KonvaAssetIcon assetId={icon.assetId} x={x} y={y} size={size} />;
   if (icon.kind === "monogram") {
     return (
       <Text
@@ -180,10 +187,42 @@ export function KonvaIcon({
   );
 }
 
+/** An uploaded image fitted (not stretched) into the square, once it has loaded. */
+function KonvaAssetIcon({
+  assetId,
+  x,
+  y,
+  size,
+}: {
+  assetId: string;
+  x: number;
+  y: number;
+  size: number;
+}) {
+  const loaded = useAssetImage(assetId);
+  if (loaded.status !== "ready") return <></>;
+  const { naturalWidth: w, naturalHeight: h } = loaded.img;
+  const k = size / Math.max(w, h, 1);
+  return (
+    <KonvaImage
+      image={loaded.img}
+      x={x + (size - w * k) / 2}
+      y={y + (size - h * k) / 2}
+      width={w * k}
+      height={h * k}
+      listening={false}
+      perfectDrawEnabled={false}
+    />
+  );
+}
+
 /* ── DOM and SVG ────────────────────────────────────────────────────────── */
 
 /** The icon's inner SVG markup on its 24×24 grid. */
 function innerMarkup(icon: IconSpec, color: string): string {
+  // SVG export swaps the URL for the image's bytes.
+  if (icon.kind === "image")
+    return `<image href="${esc(assetUrl(icon.assetId))}" width="24" height="24" preserveAspectRatio="xMidYMid meet"/>`;
   if (icon.kind === "brand") return `<path d="${esc(icon.path)}" fill="${esc(color)}"/>`;
   if (icon.kind === "monogram") {
     // Stretched to the grid's full width so it stays legible at small sizes.
@@ -218,6 +257,19 @@ export function IconSvg({
   size?: number;
   className?: string;
 }) {
+  if (icon.kind === "image") {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- a board asset, not a page image
+      <img
+        src={assetUrl(icon.assetId)}
+        alt=""
+        width={size}
+        height={size}
+        className={className}
+        style={{ objectFit: "contain", width: size, height: size }}
+      />
+    );
+  }
   return (
     <svg
       width={size}

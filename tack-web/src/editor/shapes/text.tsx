@@ -55,7 +55,7 @@ export const MAX_FONT_SIZE = 400;
 /** The size new text starts at. */
 export const DEFAULT_FONT_SIZE = 16;
 
-const DEFAULT_TEXT: TextProps = {
+export const DEFAULT_TEXT: TextProps = {
   text: "Write here",
   fontSize: DEFAULT_FONT_SIZE,
   color: "#000000",
@@ -155,7 +155,7 @@ const reportNoSize = (node: Konva.Group | null) => {
 };
 
 /** Draws laid-out markdown: text runs, code and quote backgrounds, rules and checkboxes. */
-function MarkdownText({ p }: { p: TextProps }) {
+export function MarkdownText({ p }: { p: TextProps }) {
   const { pieces, w, h } = layoutMarkdown(p.text, p);
   // Bold, italic and code use faces the plain text doesn't; fetch them (redraws when they land).
   const faces = [
@@ -257,7 +257,7 @@ function MarkdownText({ p }: { p: TextProps }) {
 }
 
 /** The same pieces as SVG, for export. */
-function markdownSvg(l: MarkdownLayout, p: TextProps): string {
+export function markdownSvg(l: MarkdownLayout, p: TextProps): string {
   return l.pieces
     .map((piece) => {
       switch (piece.kind) {

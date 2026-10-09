@@ -6,15 +6,18 @@ import { arrowShape, lineShape } from "./shapes/line";
 import { freehandShape } from "./shapes/freehand";
 import { shapeRegistry } from "./shapes/registry";
 import { toolRegistry } from "./tools/registry";
+import { stickyShape } from "./shapes/sticky";
 import { eraserTool } from "./tools/eraser";
 import { frameShape } from "./shapes/frame";
 import { tableShape } from "./shapes/table";
 import { imageShape } from "./shapes/image";
 import { selectTool } from "./tools/select";
+import { stickyTool } from "./tools/sticky";
 import { imageTool } from "./tools/image";
 import { textShape } from "./shapes/text";
 import { drawTool } from "./tools/draw";
 import { handTool } from "./tools/hand";
+import { zoomTool } from "./tools/zoom";
 import { textTool } from "./tools/text";
 
 // Built-ins register exactly like custom shapes and tools do. Toolbar order is registration order.
@@ -27,6 +30,7 @@ shapeRegistry.register(lineShape);
 shapeRegistry.register(arrowShape);
 shapeRegistry.register(freehandShape);
 shapeRegistry.register(textShape);
+shapeRegistry.register(stickyShape);
 shapeRegistry.register(imageShape);
 shapeRegistry.register(tableShape);
 
@@ -41,5 +45,7 @@ toolRegistry.register(lineTool);
 toolRegistry.register(arrowTool);
 toolRegistry.register(drawTool);
 toolRegistry.register(textTool);
+toolRegistry.register(stickyTool);
 toolRegistry.register(imageTool);
 toolRegistry.register(eraserTool);
+toolRegistry.register(zoomTool);
