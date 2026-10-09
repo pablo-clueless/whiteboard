@@ -1,12 +1,13 @@
 import { Group, Label, Line, Path, Tag, Text } from "react-konva";
 
+import { type Curves, edgeCount, hasCurves, pathData, sampleOutline, validCurves } from "../nodes";
 import { type Axis, axisBetween, elbowPoints, roundedPathData } from "../routing";
+import { konvaDash, readStrokeStyle, type StrokeStyle } from "../stroke";
 import type { Box, Shape, ShapeDef, Vec } from "../types";
 import { clamp, MAX_STROKE_WIDTH, num, str } from "./box";
 import { useEditorStore } from "@/stores/editor";
 import { measureText, textFont } from "./text";
 import { esc, paint, points } from "../svg";
-import { type Curves, edgeCount, hasCurves, pathData, sampleOutline, validCurves } from "../nodes";
 
 /** Shared by lines and arrows. `path` is flat [x0, y0, x1, y1] in the shape's own space. */
 export type LineProps = {
@@ -15,6 +16,7 @@ export type LineProps = {
   curves: Curves;
   stroke: string;
   strokeWidth: number;
+  strokeStyle: StrokeStyle;
 };
 
 /**
@@ -38,7 +40,6 @@ export type ArrowProps = LineProps & {
   /** Small text by each end, e.g. "1" and "*" for a relationship's cardinality. */
   startLabel: string;
   endLabel: string;
-  dashed: boolean;
   /**
    * Its points were placed by hand (in point editing): rerouting then moves only the attached
    * ends and keeps the rest. Off again when the line style is switched.
@@ -114,6 +115,7 @@ const DEFAULT_LINE: LineProps = {
   curves: [],
   stroke: "#000000",
   strokeWidth: 1,
+  strokeStyle: "solid",
 };
 
 /** Pointer-friendly hit area for thin lines, in page units. */
@@ -136,6 +138,9 @@ function validateLine(raw: unknown): LineProps {
     curves: validCurves(p.curves, edgeCount(path.length / 2, false)),
     stroke: str(p.stroke, DEFAULT_LINE.stroke),
     strokeWidth: clamp(num(p.strokeWidth, DEFAULT_LINE.strokeWidth), 0.5, MAX_STROKE_WIDTH),
+    // Arrows from before line styles stored `dashed: true` (diagram imports).
+    strokeStyle:
+      p.strokeStyle === undefined && p.dashed === true ? "dashed" : readStrokeStyle(p.strokeStyle),
   };
 }
 
@@ -185,8 +190,8 @@ export const lineShape: ShapeDef<LineProps, "line"> = {
   },
   toSvg: ({ props: p }) =>
     hasCurves(p.curves)
-      ? `<path d="${pathData(p.path, p.curves, false)}" ${paint(null, p.stroke, p.strokeWidth)} stroke-linecap="round" stroke-linejoin="round"/>`
-      : `<polyline points="${points(p.path)}" ${paint(null, p.stroke, p.strokeWidth)}/>`,
+      ? `<path d="${pathData(p.path, p.curves, false)}" ${paint(null, p.stroke, p.strokeWidth, p.strokeStyle)}/>`
+      : `<polyline points="${points(p.path)}" ${paint(null, p.stroke, p.strokeWidth, p.strokeStyle)}/>`,
   Component: ({ shape }) => {
     const p = shape.props;
     if (hasCurves(p.curves))
@@ -197,6 +202,7 @@ export const lineShape: ShapeDef<LineProps, "line"> = {
           strokeWidth={p.strokeWidth}
           lineCap="round"
           lineJoin="round"
+          {...konvaDash(p.strokeStyle, p.strokeWidth)}
           fillEnabled={false}
           hitStrokeWidth={Math.max(HIT_WIDTH, p.strokeWidth)}
           perfectDrawEnabled={false}
@@ -209,6 +215,7 @@ export const lineShape: ShapeDef<LineProps, "line"> = {
         strokeWidth={p.strokeWidth}
         lineCap="round"
         lineJoin="round"
+        {...konvaDash(p.strokeStyle, p.strokeWidth)}
         hitStrokeWidth={Math.max(HIT_WIDTH, p.strokeWidth)}
         perfectDrawEnabled={false}
       />
@@ -349,7 +356,6 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
     label: "",
     startLabel: "",
     endLabel: "",
-    dashed: false,
     manual: false,
   },
   validate: (raw) => {
@@ -367,7 +373,6 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
       label: str(p.label, "").slice(0, 200),
       startLabel: str(p.startLabel, "").slice(0, 8),
       endLabel: str(p.endLabel, "").slice(0, 8),
-      dashed: p.dashed === true,
       manual: p.manual === true,
     };
   },
@@ -393,8 +398,7 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
   },
   toSvg: ({ props: p }) => {
     const { data, heads } = arrowGeometry(p);
-    const dash = p.dashed ? ` stroke-dasharray="${p.strokeWidth * 4} ${p.strokeWidth * 3}"` : "";
-    const body = `<path d="${esc(data)}" ${paint(null, p.stroke, p.strokeWidth)}${dash}/>`;
+    const body = `<path d="${esc(data)}" ${paint(null, p.stroke, p.strokeWidth, p.strokeStyle)}/>`;
     const text = (t: string, x: number, y: number, size: number) =>
       `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" font-family="${esc(textFont())}" font-size="${size}" fill="#4a4a52">${esc(t)}</text>`;
     let labels = "";
@@ -411,7 +415,7 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
       heads
         .map(
           (h) =>
-            `<polygon points="${points(h.points)}" ${paint(h.fill, p.stroke, p.strokeWidth)} stroke-linejoin="round"/>`,
+            `<polygon points="${points(h.points)}" ${paint(h.fill, p.stroke, p.strokeWidth)}/>`,
         )
         .join("") +
       labels
@@ -444,9 +448,9 @@ export const arrowShape: ShapeDef<ArrowProps, "arrow"> = {
           data={data}
           stroke={p.stroke}
           strokeWidth={p.strokeWidth}
-          dash={p.dashed ? [p.strokeWidth * 4, p.strokeWidth * 3] : undefined}
           lineCap="round"
           lineJoin="round"
+          {...konvaDash(p.strokeStyle, p.strokeWidth)}
           fillEnabled={false}
           hitStrokeWidth={Math.max(HIT_WIDTH, p.strokeWidth)}
           perfectDrawEnabled={false}

@@ -8,16 +8,19 @@ import type { WebsocketProvider } from "y-websocket";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { getEntry, insertEntry, LIBRARY_DRAG_TYPE, useBoardComponents } from "./library";
 import { COMPONENT_DRAG_TYPE, type ComponentRef } from "./component-catalog";
 import { describe, detectDiagram, insertDiagram } from "./import/diagram";
 import { ComponentGroup, insertComponent } from "./ComponentGroup";
 import { screenToPage, useEditorStore } from "@/stores/editor";
+import { useRememberedView } from "./sync/useRememberedView";
 import { useMigrations } from "./sync/useMigrations";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { Editor as EditorApi } from "./editor-core";
 import { Toolbar, ZoomControls } from "./Toolbar";
 import { usePresencePublisher } from "./Presence";
 import { TemplatePicker } from "./TemplatePicker";
+import { LibraryDialogs } from "./LibraryDialogs";
 import { Toaster } from "@/components/ui/sonner";
 import type { BoardDoc } from "./sync/board-doc";
 import { ImportDialog } from "./ImportDialog";
@@ -80,6 +83,8 @@ function BoardEditor({
       }),
   );
   useOnPermanentClose(provider, onRevoked);
+  // Reloading puts you back where you were: same pan, zoom, tool and selection.
+  useRememberedView(editor, boardId, provider);
   useMigrations(editor, board, provider, { viewOnly: role === "view" });
   useOnBoardFull(provider, () => editor.ui.setBoardFull(true));
   // The flag lives in a store shared by every board this tab opens.
@@ -105,6 +110,8 @@ function BoardEditor({
   }, [editor]);
 
   usePresencePublisher(editor, provider.awareness);
+  // Components made on this board draw like the built-in ones.
+  useBoardComponents(editor);
 
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -167,11 +174,11 @@ function BoardEditor({
     };
   }, [editor]);
 
-  // Drop image files, or components dragged from the panel, where they're released.
+  // Drop image files, or components and saved shapes dragged from the panel, where released.
   const onDragOver = (e: React.DragEvent) => {
     const types = e.dataTransfer.types;
-    if (editor.readOnly || !(types.includes("Files") || types.includes(COMPONENT_DRAG_TYPE)))
-      return;
+    const ours = types.includes(COMPONENT_DRAG_TYPE) || types.includes(LIBRARY_DRAG_TYPE);
+    if (editor.readOnly || !(types.includes("Files") || ours)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
   };
@@ -186,6 +193,13 @@ function BoardEditor({
       } catch {
         // Not our data after all.
       }
+      return;
+    }
+    const saved = e.dataTransfer.getData(LIBRARY_DRAG_TYPE);
+    if (saved) {
+      e.preventDefault();
+      const entry = getEntry(editor, saved);
+      if (entry) insertEntry(editor, entry, at);
       return;
     }
     if (!e.dataTransfer.files.length) return;
@@ -239,6 +253,7 @@ function BoardEditor({
       {locked && <LockedBanner reason={locked} />}
       <ShortcutsDialog editor={editor} />
       <ImportDialog editor={editor} />
+      <LibraryDialogs editor={editor} />
       <TemplatePicker boardId={boardId} editor={editor} provider={provider} />
       <Toaster theme="light" position="bottom-center" offset={80} />
     </div>

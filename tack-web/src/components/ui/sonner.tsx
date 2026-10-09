@@ -1,7 +1,7 @@
 "use client";
 
-import { useTheme } from "next-themes";
 import { Toaster as Sonner, type ToasterProps } from "sonner";
+import { useTheme } from "next-themes";
 import {
   CircleCheckIcon,
   InfoIcon,
@@ -35,6 +35,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         classNames: {
           toast: "cn-toast",
+          // Sonner's own action colours lose to the base button reset, leaving white on nothing.
+          actionButton: "bg-primary! text-white! font-semibold!",
         },
       }}
       {...props}

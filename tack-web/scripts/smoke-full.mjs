@@ -6,8 +6,8 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
 const URL = process.env.TACK_WS_URL ?? "ws://localhost:8090/ws/boards";
-const API = process.env.TACK_API_URL ?? "http://localhost:8090";
 const ORIGIN = process.env.TACK_ORIGIN ?? "http://localhost:3000";
+const API = process.env.TACK_API_URL ?? "http://localhost:8090";
 const MESSAGE_BOARD_FULL = 100;
 
 const { boardId, editToken } = await fetch(`${API}/api/boards`, { method: "POST" }).then((r) =>
@@ -47,7 +47,10 @@ await until("a synced", () => a.provider.synced);
 // About 1 KB per edit, well past a small limit.
 const shapes = a.doc.getMap("shapes");
 for (let i = 0; i < 60; i++) {
-  shapes.set(`s${i}`, new Y.Map(Object.entries({ type: "text", props: { text: "x".repeat(1000) } })));
+  shapes.set(
+    `s${i}`,
+    new Y.Map(Object.entries({ type: "text", props: { text: "x".repeat(1000) } })),
+  );
   await new Promise((r) => setTimeout(r, 5));
 }
 await until("a is told the board is full", () => a.full() > 0);

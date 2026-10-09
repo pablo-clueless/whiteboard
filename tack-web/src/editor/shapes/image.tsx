@@ -52,7 +52,15 @@ function entry(assetId: string) {
 /** Resolves once the image has loaded (or failed), e.g. before exporting. */
 export const whenImageLoaded = (assetId: string) => entry(assetId).ready;
 
-function useAssetImage(assetId: string): Loaded {
+/**
+ * Resolves once every image the page has asked for has loaded (or failed): image shapes, and
+ * images used inside other shapes (a custom component's icon).
+ */
+export const whenImagesLoaded = () =>
+  Promise.all([...images.values()].map((e) => e.ready)).then(() => {});
+
+/** The shared <img> for an asset, re-rendering when it loads. */
+export function useAssetImage(assetId: string): Loaded {
   return useSyncExternalStore(
     (onChange) => {
       const e = entry(assetId);

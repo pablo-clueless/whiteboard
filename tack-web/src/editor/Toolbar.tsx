@@ -1,8 +1,18 @@
 "use client";
 
-import { ChevronUp, Keyboard, Maximize, Minus, Plus, Redo2, RotateCcw, Undo2 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cn } from "cn";
+import {
+  ChevronUp,
+  Keyboard,
+  Maximize,
+  Minus,
+  Plus,
+  Redo2,
+  RotateCcw,
+  Undo2,
+  ZoomIn,
+} from "lucide-react";
 
 import { useEditorStore, zoomAt } from "@/stores/editor";
 import { toolRegistry } from "./tools/registry";
@@ -190,7 +200,9 @@ export function Toolbar({ editor }: { editor: Editor }) {
         aria-label="Tools"
         className="pointer-events-auto flex items-center gap-1 rounded-2xl border bg-white p-1.5 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
       >
-        {groupTools(toolRegistry.all().filter((t) => editor.canUseTool(t.id))).map((entry) =>
+        {groupTools(
+          toolRegistry.all().filter((t) => t.toolbar !== false && editor.canUseTool(t.id)),
+        ).map((entry) =>
           entry.length === 1 && !entry[0].group ? (
             <IconButton
               key={entry[0].id}
@@ -227,6 +239,7 @@ export function Toolbar({ editor }: { editor: Editor }) {
 export function ZoomControls({ editor }: { editor: Editor }) {
   const camera = useEditorStore((s) => s.camera);
   const setCamera = useEditorStore((s) => s.setCamera);
+  const zooming = useEditorStore((s) => s.toolId === "zoom");
   const screenCentre = () => ({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 
   const zoomBy = (factor: number) =>
@@ -273,6 +286,13 @@ export function ZoomControls({ editor }: { editor: Editor }) {
         <RotateCcw className="size-4" />
       </IconButton>
       <span className="mx-0.5 h-5 w-px bg-[#e6e6ea]" aria-hidden />
+      <IconButton
+        label="Zoom to area (Z): drag over part of the board, or click to zoom in (Alt: out)"
+        active={zooming}
+        onClick={() => editor.setTool(zooming ? "select" : "zoom")}
+      >
+        <ZoomIn className="size-4" />
+      </IconButton>
       <IconButton label="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
         <Minus className="size-4" />
       </IconButton>

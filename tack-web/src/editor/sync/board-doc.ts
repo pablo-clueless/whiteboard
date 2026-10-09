@@ -14,6 +14,8 @@ export type BoardDoc = {
   shapes: Y.Map<Y.Map<unknown>>;
   /** bindingId → binding (plain JSON). */
   bindings: Y.Map<unknown>;
+  /** entryId → a component people made on this board (plain JSON; see `library.ts`). */
+  library: Y.Map<unknown>;
 };
 
 export function createBoardDoc(doc = new Y.Doc()): BoardDoc {
@@ -22,6 +24,7 @@ export function createBoardDoc(doc = new Y.Doc()): BoardDoc {
     meta: doc.getMap("meta"),
     shapes: doc.getMap("shapes"),
     bindings: doc.getMap("bindings"),
+    library: doc.getMap("library"),
   };
 }
 

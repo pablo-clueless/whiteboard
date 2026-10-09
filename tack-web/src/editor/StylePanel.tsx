@@ -34,9 +34,12 @@ import type { TableField, TableProps } from "./shapes/table";
 import { Slider as UiSlider } from "@/components/ui/slider";
 import { ARROW_HEADS, type ArrowHead } from "./shapes/line";
 import { ARRANGE_ICONS, runArrange } from "./ArrangeMenu";
+import { dashArray, STROKE_STYLES } from "./stroke";
+import { rememberStickyFill } from "./tools/sticky";
 import { shapeRegistry } from "./shapes/registry";
 import { useEditorStore } from "@/stores/editor";
 import { MAX_STROKE_WIDTH } from "./shapes/box";
+import { STICKY_COLORS } from "./shapes/sticky";
 import { ALIGN_ACTIONS } from "./align-actions";
 import { useShape } from "./sync/useShapes";
 import { ARRANGE_MODES } from "./arrange";
@@ -779,7 +782,32 @@ export function StylePanel({ editor }: { editor: Editor }) {
           />
         </Section>
       )}
-      {has("fill") && (
+      {first.type === "sticky" && (
+        <Section title="Note colour">
+          <div className="grid grid-cols-8 gap-1.5">
+            {STICKY_COLORS.map((c) => (
+              <Swatch
+                key={c.value}
+                color={c.value}
+                label={c.label}
+                selected={same(props.fill, c.value)}
+                onClick={() => {
+                  // The next note placed comes out in this colour too.
+                  rememberStickyFill(c.value);
+                  set({ fill: c.value });
+                }}
+              />
+            ))}
+          </div>
+          <ColorInput
+            key={props.fill}
+            label="Note colour"
+            value={props.fill!}
+            onCommit={(fill) => set({ fill })}
+          />
+        </Section>
+      )}
+      {has("fill") && first.type !== "sticky" && (
         <Section title="Fill">
           <div className="grid grid-cols-8 gap-1.5">
             {FILLS.map((f) => (
@@ -1223,6 +1251,36 @@ export function StylePanel({ editor }: { editor: Editor }) {
               suffix="px"
               onCommit={(strokeWidth) => set({ strokeWidth })}
             />
+          </div>
+        </Section>
+      )}
+      {has("strokeStyle") && (
+        <Section title="Line style">
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+            {STROKE_STYLES.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                title={s.label}
+                aria-label={`${s.label} line`}
+                aria-pressed={props.strokeStyle === s.value}
+                onClick={() => set({ strokeStyle: s.value })}
+                className={cn(
+                  "focus-visible:ring-primary/40 text-ink grid h-7 place-items-center rounded-lg outline-none focus-visible:ring-3",
+                  props.strokeStyle === s.value ? "bg-white shadow-sm" : "hover:bg-white/60",
+                )}
+              >
+                <svg width="28" height="8" viewBox="0 0 28 8" aria-hidden>
+                  <path
+                    d="M2 4H26"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeDasharray={dashArray(s.value, 2)?.join(" ")}
+                  />
+                </svg>
+              </button>
+            ))}
           </div>
         </Section>
       )}

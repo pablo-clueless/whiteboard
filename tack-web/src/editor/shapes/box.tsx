@@ -1,5 +1,6 @@
 import { Ellipse, Rect } from "react-konva";
 
+import { konvaDash, readStrokeStyle, type StrokeStyle } from "../stroke";
 import type { ResizeInfo, Shape, ShapeDef } from "../types";
 import { rotatedBounds } from "../geometry";
 import { n, paint } from "../svg";
@@ -11,6 +12,7 @@ export type BoxProps = {
   fill: string;
   stroke: string;
   strokeWidth: number;
+  strokeStyle: StrokeStyle;
 };
 
 export type RectProps = BoxProps & {
@@ -25,6 +27,7 @@ export const DEFAULT_BOX: BoxProps = {
   fill: "#ffffff",
   stroke: "#000000",
   strokeWidth: 1,
+  strokeStyle: "solid",
 };
 
 /** Largest stroke width the editor accepts. */
@@ -43,6 +46,7 @@ export function validateBox(raw: unknown): BoxProps {
     fill: str(p.fill, DEFAULT_BOX.fill),
     stroke: str(p.stroke, DEFAULT_BOX.stroke),
     strokeWidth: clamp(num(p.strokeWidth, DEFAULT_BOX.strokeWidth), 0, MAX_STROKE_WIDTH),
+    strokeStyle: readStrokeStyle(p.strokeStyle),
   };
 }
 
@@ -80,7 +84,7 @@ export const rectShape: ShapeDef<RectProps, "rect"> = {
   onResize: boxResize,
   toSvg: ({ props: p }) => {
     const r = n(Math.min(p.radius, p.w / 2, p.h / 2));
-    return `<rect width="${n(p.w)}" height="${n(p.h)}" rx="${r}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`;
+    return `<rect width="${n(p.w)}" height="${n(p.h)}" rx="${r}" ${paint(p.fill, p.stroke, p.strokeWidth, p.strokeStyle)}/>`;
   },
   Component: ({ shape }) => {
     const p = shape.props;
@@ -91,6 +95,7 @@ export const rectShape: ShapeDef<RectProps, "rect"> = {
         fill={p.fill}
         stroke={p.stroke}
         strokeWidth={p.strokeWidth}
+        {...konvaDash(p.strokeStyle, p.strokeWidth)}
         cornerRadius={Math.min(p.radius, p.w / 2, p.h / 2)}
         perfectDrawEnabled={false}
       />
@@ -120,7 +125,7 @@ export const ellipseShape: ShapeDef<BoxProps, "ellipse"> = {
       return { x: p.w / 2 + (Math.cos(a) * p.w) / 2, y: p.h / 2 + (Math.sin(a) * p.h) / 2 };
     }),
   toSvg: ({ props: p }) =>
-    `<ellipse cx="${n(p.w / 2)}" cy="${n(p.h / 2)}" rx="${n(p.w / 2)}" ry="${n(p.h / 2)}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`,
+    `<ellipse cx="${n(p.w / 2)}" cy="${n(p.h / 2)}" rx="${n(p.w / 2)}" ry="${n(p.h / 2)}" ${paint(p.fill, p.stroke, p.strokeWidth, p.strokeStyle)}/>`,
   Component: ({ shape }) => {
     const p = shape.props;
     return (
@@ -132,6 +137,7 @@ export const ellipseShape: ShapeDef<BoxProps, "ellipse"> = {
         fill={p.fill}
         stroke={p.stroke}
         strokeWidth={p.strokeWidth}
+        {...konvaDash(p.strokeStyle, p.strokeWidth)}
         perfectDrawEnabled={false}
       />
     );

@@ -1,14 +1,34 @@
 "use client";
 
-import { ChevronRight, PanelRightClose, Search, Shapes, X } from "lucide-react";
 import { AnimatePresence, MotionConfig, motion, type Transition } from "motion/react";
 import { useMemo, useState, useSyncExternalStore } from "react";
+import {
+  ChevronRight,
+  PanelRightClose,
+  Pencil,
+  Plus,
+  Search,
+  Shapes,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import { IconSvg, readable, tint } from "./icons";
 import { shapeRegistry } from "./shapes/registry";
+import { deleteEntry } from "./LibraryDialogs";
 import { screenToPage } from "@/stores/editor";
 import type { Editor } from "./editor-core";
 import type { Vec } from "./types";
+import {
+  BOARD_PROVIDER,
+  insertEntry,
+  LIBRARY_DRAG_TYPE,
+  type LibraryEntry,
+  resolveIcon,
+  type ShapesEntry,
+  shapesPreviewSvg,
+  useLibrary,
+} from "./library";
 import {
   COMPONENT_DRAG_TYPE,
   type ComponentItem,
@@ -21,10 +41,18 @@ import {
 /** The shape type that draws catalog items. Registered by the components plugin. */
 export const COMPONENT_SHAPE = "component";
 
-/** Places a component centred on `at` (page space) and selects it. */
-export function insertComponent(editor: Editor, ref: ComponentRef, at: Vec): string | null {
-  const found = componentCatalog.find(ref);
-  if (!found || editor.readOnly) return null;
+/**
+ * Places a component centred on `at` (page space) and selects it. `label` names it without
+ * looking it up in the catalog.
+ */
+export function insertComponent(
+  editor: Editor,
+  ref: ComponentRef,
+  at: Vec,
+  label?: string,
+): string | null {
+  const name = label ?? componentCatalog.find(ref)?.item.label;
+  if (name === undefined || editor.readOnly) return null;
   const size = (shapeRegistry.get(COMPONENT_SHAPE)?.defaultProps ?? { w: 0, h: 0 }) as {
     w: number;
     h: number;
@@ -34,7 +62,7 @@ export function insertComponent(editor: Editor, ref: ComponentRef, at: Vec): str
     type: COMPONENT_SHAPE,
     x: at.x - size.w / 2,
     y: at.y - size.h / 2,
-    props: { ...ref, label: found.item.label },
+    props: { ...ref, label: name },
   });
   editor.markHistory();
   editor.select([id]);
@@ -55,7 +83,7 @@ function load(): Saved {
   } catch {
     // Storage unavailable or junk: use the defaults.
   }
-  return { open: true, expanded: ["aws"] };
+  return { open: true, expanded: [BOARD_PROVIDER, "aws"] };
 }
 
 function save(state: Saved) {
@@ -87,6 +115,7 @@ export function ComponentGroup({ editor }: { editor: Editor }) {
     componentCatalog.all,
     componentCatalog.all,
   );
+  const library = useLibrary(editor);
   // The editor renders only in the browser (no SSR), so storage can be read up front.
   const [state, setState] = useState<Saved>(load);
   const [query, setQuery] = useState("");
@@ -102,10 +131,13 @@ export function ComponentGroup({ editor }: { editor: Editor }) {
   const filtered = useMemo(
     () =>
       providers
+        // This board's cards are listed with its saved shapes, above the rest.
+        .filter((p) => p.id !== BOARD_PROVIDER)
         .map((p) => ({ provider: p, items: q ? p.items.filter((i) => matches(p, i, q)) : p.items }))
         .filter((g) => g.items.length),
     [providers, q],
   );
+  const own = q ? library.filter((e) => e.label.toLowerCase().includes(q)) : library;
 
   if (editor.readOnly) return null;
 
@@ -172,7 +204,15 @@ export function ComponentGroup({ editor }: { editor: Editor }) {
               </label>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-              {filtered.length === 0 && (
+              {(!q || own.length > 0) && (
+                <BoardSection
+                  editor={editor}
+                  entries={own}
+                  open={!!q || state.expanded.includes(BOARD_PROVIDER)}
+                  onToggle={() => toggle(BOARD_PROVIDER)}
+                />
+              )}
+              {filtered.length === 0 && own.length === 0 && (
                 <p className="text-ink/50 px-2 py-6 text-center text-xs">
                   Nothing matches “{query.trim()}”.
                 </p>
@@ -300,5 +340,171 @@ function Tile({
         {item.label}
       </span>
     </button>
+  );
+}
+
+/* ── This board ─────────────────────────────────────────────────────────── */
+
+/**
+ * Components made on this board: cards (made with "New component") and saved selections (from
+ * "Save as component" on the right-click menu). Shared with everyone on the board.
+ */
+function BoardSection({
+  editor,
+  entries,
+  open,
+  onToggle,
+}: {
+  editor: Editor;
+  entries: LibraryEntry[];
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const newCard = () => editor.ui.setLibraryDialog({ kind: "card", id: null });
+  return (
+    <section className="mb-0.5">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onToggle}
+          className="focus-visible:ring-primary/40 flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-1.5 py-1.5 text-left outline-none hover:bg-[#f6f6f7] focus-visible:ring-3"
+        >
+          <span className="bg-primary/10 border-primary/25 text-primary grid size-7 shrink-0 place-items-center rounded-lg border">
+            <Shapes className="size-4" />
+          </span>
+          <span className="text-ink flex-1 text-[13px] font-semibold">This board</span>
+          <span className="text-ink/40 font-mono text-[10px]">{entries.length}</span>
+          <motion.span
+            animate={{ rotate: open ? 90 : 0 }}
+            transition={ACCORDION_EASE}
+            className="text-ink/40 grid place-items-center"
+          >
+            <ChevronRight className="size-3.5" />
+          </motion.span>
+        </button>
+        <button
+          type="button"
+          title="New component"
+          aria-label="New component"
+          onClick={newCard}
+          className="text-ink/60 hover:text-ink focus-visible:ring-primary/40 grid size-7 shrink-0 place-items-center rounded-lg outline-none hover:bg-[#f1f1f3] focus-visible:ring-3"
+        >
+          <Plus className="size-4" />
+        </button>
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="items"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={ACCORDION_EASE}
+            className="overflow-hidden"
+          >
+            {entries.length === 0 ? (
+              <div className="px-1.5 pt-1 pb-2">
+                <button
+                  type="button"
+                  onClick={newCard}
+                  className="text-ink/55 hover:border-ink/25 hover:text-ink/75 focus-visible:ring-primary/40 w-full rounded-xl border border-dashed px-3 py-3 text-left text-[11.5px] leading-snug outline-none focus-visible:ring-3"
+                >
+                  <span className="text-ink block font-semibold">Make your own</span>
+                  Click to make a card with your own name, icon and colour. Or select shapes,
+                  right-click, and choose Save as component.
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-1 px-0.5 pt-1 pb-2">
+                {entries.map((entry) => (
+                  <OwnTile key={entry.id} editor={editor} entry={entry} />
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </section>
+  );
+}
+
+/** A preview of saved shapes, as an image so nothing in it can run or load. */
+function ShapesPreview({ entry }: { entry: ShapesEntry }) {
+  const src = useMemo(() => {
+    const svg = shapesPreviewSvg(entry);
+    return svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : null;
+  }, [entry]);
+  if (!src) return <Shapes className="text-ink/40 size-4" />;
+  // eslint-disable-next-line @next/next/no-img-element -- a generated data URI
+  return <img src={src} alt="" className="size-full object-contain p-0.5" draggable={false} />;
+}
+
+function OwnTile({ editor, entry }: { editor: Editor; entry: LibraryEntry }) {
+  const insert = () => {
+    const middle = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    insertEntry(editor, entry, screenToPage(middle, editor.ui.camera));
+  };
+  const accent = entry.kind === "card" ? readable(entry.color) : "#8a8a93";
+  const icon = entry.kind === "card" ? resolveIcon(entry.icon, entry.label) : null;
+  const action =
+    "text-ink/55 hover:text-ink grid size-5 place-items-center rounded-md bg-white shadow-sm ring-1 ring-black/5";
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        title={`${entry.label}${entry.kind === "shapes" ? ` (${entry.count} shape${entry.count === 1 ? "" : "s"})` : ""}. Click to add, or drag onto the board`}
+        draggable
+        onDragStart={(e) => {
+          if (entry.kind === "card") {
+            e.dataTransfer.setData(
+              COMPONENT_DRAG_TYPE,
+              JSON.stringify({ provider: BOARD_PROVIDER, item: entry.id } satisfies ComponentRef),
+            );
+          } else {
+            e.dataTransfer.setData(LIBRARY_DRAG_TYPE, entry.id);
+          }
+          e.dataTransfer.effectAllowed = "copy";
+        }}
+        onClick={insert}
+        className="focus-visible:ring-primary/40 flex w-full flex-col items-center gap-1 rounded-xl px-1 pt-2 pb-1.5 outline-none hover:bg-[#f6f6f7] focus-visible:ring-3"
+      >
+        <span
+          className="grid size-9 place-items-center overflow-hidden rounded-[10px] border bg-white transition-colors"
+          style={{ borderColor: tint(accent, 0.65) }}
+        >
+          {icon ? (
+            <IconSvg icon={icon} color={icon.kind === "brand" ? icon.hex : accent} size={20} />
+          ) : (
+            <ShapesPreview entry={entry as ShapesEntry} />
+          )}
+        </span>
+        <span className="text-ink/80 line-clamp-2 text-center text-[10.5px] leading-tight font-medium">
+          {entry.label}
+        </span>
+      </button>
+      <div className="absolute top-0.5 right-0.5 hidden gap-0.5 group-focus-within:flex group-hover:flex">
+        {entry.kind === "card" && (
+          <button
+            type="button"
+            title={`Edit ${entry.label}`}
+            aria-label={`Edit ${entry.label}`}
+            onClick={() => editor.ui.setLibraryDialog({ kind: "card", id: entry.id })}
+            className={action}
+          >
+            <Pencil className="size-3" />
+          </button>
+        )}
+        <button
+          type="button"
+          title={`Delete ${entry.label}`}
+          aria-label={`Delete ${entry.label}`}
+          onClick={() => deleteEntry(editor, entry)}
+          className={`${action} hover:text-destructive`}
+        >
+          <Trash2 className="size-3" />
+        </button>
+      </div>
+    </div>
   );
 }

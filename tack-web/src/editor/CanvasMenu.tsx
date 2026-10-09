@@ -18,6 +18,7 @@ import {
   Ungroup,
   Keyboard,
   Layers,
+  LayoutTemplate,
   Lock,
   type LucideIcon,
   MousePointer2,
@@ -260,6 +261,11 @@ function MenuItems({ editor }: { editor: Editor }) {
               />
             ))}
           </Submenu>
+          <Item
+            icon={LayoutTemplate}
+            label="Save as component…"
+            onClick={() => editor.ui.setLibraryDialog({ kind: "save", ids: selectedIds })}
+          />
           <Item
             icon={allLocked ? Unlock : Lock}
             label={allLocked ? "Unlock" : "Lock"}

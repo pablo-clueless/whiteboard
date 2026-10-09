@@ -3,6 +3,7 @@ import { Line, Path } from "react-konva";
 import { type BoxProps, boxBounds, boxResize, clamp, DEFAULT_BOX, num, validateBox } from "./box";
 import type { Shape, ShapeDef } from "../types";
 import { paint, points } from "../svg";
+import { konvaDash } from "../stroke";
 import { toPage } from "../bindings";
 import {
   type Curves,
@@ -137,6 +138,7 @@ function OutlineShape({ pts, curves, p }: { pts: number[]; curves: Curves; p: Bo
         fill={p.fill}
         stroke={p.stroke}
         strokeWidth={p.strokeWidth}
+        {...konvaDash(p.strokeStyle, p.strokeWidth)}
         lineJoin="round"
         perfectDrawEnabled={false}
       />
@@ -148,6 +150,7 @@ function OutlineShape({ pts, curves, p }: { pts: number[]; curves: Curves; p: Bo
       fill={p.fill}
       stroke={p.stroke}
       strokeWidth={p.strokeWidth}
+      {...konvaDash(p.strokeStyle, p.strokeWidth)}
       lineJoin="round"
       perfectDrawEnabled={false}
     />
@@ -156,8 +159,8 @@ function OutlineShape({ pts, curves, p }: { pts: number[]; curves: Curves; p: Bo
 
 const outlineSvg = (pts: number[], curves: Curves, p: BoxProps) =>
   hasCurves(curves)
-    ? `<path d="${pathData(pts, curves, true)}" ${paint(p.fill, p.stroke, p.strokeWidth)} stroke-linejoin="round"/>`
-    : `<polygon points="${points(pts)}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`;
+    ? `<path d="${pathData(pts, curves, true)}" ${paint(p.fill, p.stroke, p.strokeWidth, p.strokeStyle)}/>`
+    : `<polygon points="${points(pts)}" ${paint(p.fill, p.stroke, p.strokeWidth, p.strokeStyle)}/>`;
 
 const regularPolygon = (p: PolygonProps) => polygonPoints(p.sides, p.w, p.h);
 const regularStar = (p: StarProps) => starPoints(p.points, p.innerRatio, p.w, p.h);

@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { type KeyboardEvent, useEffect, useRef } from "react";
 
+import { stickyLayout, stickyShape } from "./shapes/sticky";
 import { useEditorStore } from "@/stores/editor";
 import { layoutMarkdown } from "./markdown";
 import type { Editor } from "./editor-core";
 import { useShape } from "./sync/useShapes";
+import { toPage } from "./bindings";
 import {
   cssFont,
   type TextProps,
@@ -24,7 +26,130 @@ import {
 export function TextEditor({ editor }: { editor: Editor }) {
   const id = useEditorStore((s) => s.editingTextId);
   if (!id) return null;
+  // Sticky notes edit their text too, laid out inside the note.
+  if (editor.getShape(id)?.type === "sticky")
+    return <StickyArea key={id} editor={editor} id={id} />;
   return <TextArea key={id} editor={editor} id={id} />;
+}
+
+/** The style a shortcut (Ctrl/⌘ B, I, U, Shift X) toggles, or null for any other key. */
+function styleShortcut(e: KeyboardEvent): TextStyleKey | null {
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return null;
+  const key = e.key.toLowerCase();
+  if (!e.shiftKey && key === "b") return "bold";
+  if (!e.shiftKey && key === "i") return "italic";
+  if (!e.shiftKey && key === "u") return "underline";
+  if (e.shiftKey && key === "x") return "strike";
+  return null;
+}
+
+const MARKS: Record<TextStyleKey, string | null> = {
+  bold: "**",
+  italic: "*",
+  strike: "~~",
+  underline: null,
+};
+
+/**
+ * Wraps the textarea's selection in markdown marks and returns the new text, with the selection
+ * moved inside the marks. Null when nothing is selected or the style has no marks.
+ */
+function markSelection(
+  el: HTMLTextAreaElement,
+  style: TextStyleKey,
+  reselect: (from: number, to: number) => void,
+): string | null {
+  const marks = MARKS[style];
+  const [from, to] = [el.selectionStart, el.selectionEnd];
+  if (!marks || from === to) return null;
+  const text = el.value;
+  requestAnimationFrame(() => reselect(from + marks.length, to + marks.length));
+  return text.slice(0, from) + marks + text.slice(from, to) + marks + text.slice(to);
+}
+
+/**
+ * A note's text, typed into a textarea over the note at the size the note fits it to. The note
+ * itself stays drawn underneath; only its text is hidden. An emptied note is kept.
+ */
+function StickyArea({ editor, id }: { editor: Editor; id: string }) {
+  const shape = useShape(editor, id);
+  const camera = useEditorStore((s) => s.camera);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const done = useRef(false);
+
+  const finish = () => {
+    if (done.current) return;
+    done.current = true;
+    editor.endGesture();
+    editor.ui.setEditingText(null);
+  };
+
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+
+  useEffect(() => {
+    if (!shape) finish();
+  });
+
+  if (!shape || shape.type !== "sticky") return null;
+  const p = stickyShape.validate(shape.props);
+  const write = (text: string) => editor.updateShapes({ [id]: { props: { ...p, text } } });
+  // Fitted as typed (markdown symbols and all), so the caret never runs off the note.
+  const fit = stickyLayout(p, { markdown: false });
+  const z = camera.zoom;
+  const origin = toPage(shape, { x: fit.x, y: fit.y });
+  const size = fit.style.fontSize;
+
+  return (
+    <textarea
+      ref={ref}
+      aria-label="Note text"
+      value={p.text}
+      spellCheck={false}
+      onChange={(e) => write(e.target.value)}
+      onBlur={finish}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
+          e.preventDefault();
+          e.currentTarget.blur();
+          return;
+        }
+        const style = styleShortcut(e);
+        if (!style) return;
+        e.preventDefault();
+        const next = markSelection(e.currentTarget, style, (from, to) =>
+          ref.current?.setSelectionRange(from, to),
+        );
+        if (next !== null) write(next);
+      }}
+      style={{
+        position: "absolute",
+        left: origin.x * z + camera.x,
+        top: origin.y * z + camera.y,
+        width: fit.layout.w * z,
+        height: Math.max(fit.layout.h, size * fit.style.lineHeight) * z,
+        transform: shape.rotation ? `rotate(${shape.rotation}deg)` : undefined,
+        transformOrigin: "top left",
+        font: cssFont(fit.style, size * z),
+        lineHeight: fit.style.lineHeight,
+        textAlign: fit.style.align,
+        color: p.color,
+        caretColor: p.color,
+        background: "transparent",
+        border: "none",
+        outline: "none",
+        padding: 0,
+        margin: 0,
+        resize: "none",
+        overflow: "hidden",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "break-word",
+      }}
+    />
+  );
 }
 
 function TextArea({ editor, id }: { editor: Editor; id: string }) {
@@ -76,31 +201,17 @@ function TextArea({ editor, id }: { editor: Editor; id: string }) {
           e.currentTarget.blur();
           return;
         }
-        const mod = e.metaKey || e.ctrlKey;
-        const key = e.key.toLowerCase();
-        const style: TextStyleKey | null =
-          mod && !e.shiftKey && key === "b"
-            ? "bold"
-            : mod && !e.shiftKey && key === "i"
-              ? "italic"
-              : mod && !e.shiftKey && key === "u"
-                ? "underline"
-                : mod && e.shiftKey && key === "x"
-                  ? "strike"
-                  : null;
+        const style = styleShortcut(e);
         if (!style) return;
         e.preventDefault();
         // With markdown on and text selected, mark up just the selection; otherwise style it all.
-        const el = e.currentTarget;
-        const [from, to] = [el.selectionStart, el.selectionEnd];
-        const marks = { bold: "**", italic: "*", strike: "~~", underline: null }[style];
-        if (p.markdown && marks && from !== to) {
-          const text = el.value;
-          const next = text.slice(0, from) + marks + text.slice(from, to) + marks + text.slice(to);
+        const next = p.markdown
+          ? markSelection(e.currentTarget, style, (from, to) =>
+              ref.current?.setSelectionRange(from, to),
+            )
+          : null;
+        if (next !== null) {
           editor.updateShapes({ [id]: { props: { ...p, text: next } } });
-          requestAnimationFrame(() =>
-            ref.current?.setSelectionRange(from + marks.length, to + marks.length),
-          );
         } else {
           toggleTextStyle(editor, [id], style);
         }
