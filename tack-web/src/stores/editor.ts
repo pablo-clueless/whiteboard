@@ -35,6 +35,8 @@ type EditorState = {
   shortcutsOpen: boolean;
   /** The server says the board is at its size limit: edits made now wouldn't be kept. */
   boardFull: boolean;
+  /** The "diagram from code" dialog. */
+  importOpen: boolean;
   setTool: (toolId: string) => void;
   setSelection: (ids: string[]) => void;
   setHovered: (id: string | null) => void;
@@ -49,6 +51,7 @@ type EditorState = {
   setConnect: (connect: ConnectHint | null) => void;
   setOutdated: (outdated: boolean) => void;
   setShortcutsOpen: (open: boolean) => void;
+  setImportOpen: (open: boolean) => void;
   setBoardFull: (full: boolean) => void;
 };
 
@@ -70,6 +73,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
   outdated: false,
   shortcutsOpen: false,
   boardFull: false,
+  importOpen: false,
   setTool: (toolId) => set({ toolId }),
   setSelection: (selectedIds) => set({ selectedIds }),
   setHovered: (hoveredId) => set({ hoveredId }),
@@ -82,6 +86,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
   setErasing: (erasingIds) => set({ erasingIds }),
   setOutdated: (outdated) => set({ outdated }),
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
+  setImportOpen: (importOpen) => set({ importOpen }),
   setBoardFull: (boardFull) => set({ boardFull }),
   setConnect: (connect) =>
     set((s) =>

@@ -3,7 +3,8 @@
 import { Fragment, useEffect } from "react";
 
 import { useEditorStore } from "@/stores/editor";
-
+import { toolRegistry } from "./tools/registry";
+import type { Editor } from "./editor-core";
 import {
   Dialog,
   DialogContent,
@@ -11,9 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-import type { Editor } from "./editor-core";
-import { toolRegistry } from "./tools/registry";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? "⌘" : "Ctrl";
@@ -45,6 +43,31 @@ const EDIT: Row[] = [
     keys: [
       [MOD, "G"],
       [MOD, "Shift", "G"],
+    ],
+  },
+  {
+    label: "Bold · Italic · Underline",
+    keys: [
+      [MOD, "B"],
+      [MOD, "I"],
+      [MOD, "U"],
+    ],
+  },
+  { label: "Strikethrough", keys: [[MOD, "Shift", "X"]] },
+  {
+    label: "Align left · centre · right",
+    keys: [
+      [ALT, "A"],
+      [ALT, "H"],
+      [ALT, "D"],
+    ],
+  },
+  {
+    label: "Align top · middle · bottom",
+    keys: [
+      [ALT, "W"],
+      [ALT, "V"],
+      [ALT, "S"],
     ],
   },
   { label: "Edit inside a group", keys: [["Double-click"]] },
@@ -146,7 +169,7 @@ export function ShortcutsDialog({ editor }: { editor: Editor }) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>

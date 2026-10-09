@@ -107,3 +107,161 @@ async fn compact(pool: &PgPool, board_id: BoardId, state: &[u8]) {
         Err(err) => tracing::error!(%board_id, %err, "failed to compact"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Against the dev Postgres from docker-compose (or `TACK_TEST_DATABASE_URL`). Each test uses
+    //! its own new board and deletes it afterwards. Skipped, with a note, when the database isn't
+    //! reachable, so `cargo test` works without Docker running.
+
+    use std::sync::{Arc, Mutex};
+
+    use uuid::Uuid;
+    use yrs::{Doc, GetString, Map, ReadTxn, StateVector, Text, Transact, Update, updates::decoder::Decode};
+
+    use super::*;
+
+    async fn pool() -> Option<PgPool> {
+        let url = std::env::var("TACK_TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://tack:tack@localhost:5434/tack".into());
+        // Give up quickly when there's no database, rather than after the default 30 s.
+        let connect = async {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .acquire_timeout(Duration::from_secs(2))
+                .connect(&url)
+                .await?;
+            sqlx::migrate!("./migrations").run(&pool).await?;
+            anyhow::Ok(pool)
+        };
+        match connect.await {
+            Ok(pool) => Some(pool),
+            Err(err) => {
+                eprintln!("skipping: no test database at {url} ({err})");
+                None
+            }
+        }
+    }
+
+    async fn new_board(pool: &PgPool) -> Uuid {
+        let id = Uuid::new_v4();
+        let (_, edit) = crate::auth::new_token();
+        let (_, view) = crate::auth::new_token();
+        db::create_board(pool, id, &edit, &view).await.unwrap();
+        id
+    }
+
+    async fn delete_board(pool: &PgPool, id: Uuid) {
+        sqlx::query("DELETE FROM boards WHERE id = $1").bind(id).execute(pool).await.unwrap();
+    }
+
+    /// A doc that records every update it makes, as the room would receive them.
+    fn recording_doc() -> (Doc, Arc<Mutex<Vec<Vec<u8>>>>) {
+        let doc = Doc::new();
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let sink = updates.clone();
+        // Keyed observer: it stays until unobserved, i.e. for the doc's lifetime.
+        doc.observe_update_v1("record", move |_: &yrs::TransactionMut, e| {
+            sink.lock().unwrap().push(e.update.clone());
+        })
+        .unwrap();
+        (doc, updates)
+    }
+
+    /// Rebuilds a doc from what's stored, the way a room opening does.
+    async fn reload(pool: &PgPool, board: Uuid) -> (Doc, db::StoredDoc) {
+        let stored = db::load_doc(pool, board).await.unwrap();
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            for bytes in stored.snapshot.iter().chain(&stored.updates) {
+                txn.apply_update(Update::decode_v1(bytes).unwrap()).unwrap();
+            }
+        }
+        (doc, stored)
+    }
+
+    fn title(doc: &Doc) -> String {
+        let text = doc.get_or_insert_text("title");
+        text.get_string(&doc.transact())
+    }
+
+    fn shape_count(doc: &Doc) -> u32 {
+        let shapes = doc.get_or_insert_map("shapes");
+        shapes.len(&doc.transact())
+    }
+
+    #[tokio::test]
+    async fn updates_survive_a_reload_and_a_compaction() {
+        let Some(pool) = pool().await else { return };
+        let board = new_board(&pool).await;
+
+        let (doc, updates) = recording_doc();
+        let shapes = doc.get_or_insert_map("shapes");
+        let heading = doc.get_or_insert_text("title");
+        shapes.insert(&mut doc.transact_mut(), "a", "rect");
+        shapes.insert(&mut doc.transact_mut(), "b", "ellipse");
+        heading.insert(&mut doc.transact_mut(), 0, "Plan");
+        let recorded = updates.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 3);
+        db::append_updates(&pool, board, &recorded).await.unwrap();
+
+        // Every update comes back, in order.
+        let (loaded, stored) = reload(&pool, board).await;
+        assert!(stored.snapshot.is_none());
+        assert_eq!(stored.updates, recorded);
+        assert_eq!((shape_count(&loaded), title(&loaded)), (2, "Plan".into()));
+
+        // Compaction folds them into one snapshot and deletes them.
+        let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        let upto = db::max_seq(&pool, board).await.unwrap();
+        assert_eq!(db::compact(&pool, board, &state, upto).await.unwrap(), 3);
+
+        // An edit after the snapshot is loaded on top of it.
+        shapes.insert(&mut doc.transact_mut(), "c", "text");
+        let later = updates.lock().unwrap().last().unwrap().clone();
+        db::append_updates(&pool, board, &[later]).await.unwrap();
+
+        let (loaded, stored) = reload(&pool, board).await;
+        assert!(stored.snapshot.is_some());
+        assert_eq!(stored.updates.len(), 1);
+        assert_eq!(shape_count(&loaded), 3);
+        assert_eq!(title(&loaded), "Plan");
+
+        delete_board(&pool, board).await;
+    }
+
+    #[tokio::test]
+    async fn the_persister_saves_everything_before_it_closes() {
+        let Some(pool) = pool().await else { return };
+        let board = new_board(&pool).await;
+
+        let (doc, updates) = recording_doc();
+        let shapes = doc.get_or_insert_map("shapes");
+        for i in 0..5 {
+            shapes.insert(&mut doc.transact_mut(), format!("s{i}"), i as i64);
+        }
+
+        // Buffered (well within FLUSH_INTERVAL), then flushed by close.
+        let persister = Persister::spawn(pool.clone(), board);
+        for u in updates.lock().unwrap().iter() {
+            persister.update(u.clone());
+        }
+        persister.close().await;
+        let (loaded, stored) = reload(&pool, board).await;
+        assert_eq!(stored.updates.len(), 5);
+        assert_eq!(shape_count(&loaded), 5);
+
+        // A snapshot request flushes first, then compacts what's stored.
+        let persister = Persister::spawn(pool.clone(), board);
+        shapes.insert(&mut doc.transact_mut(), "s5", 5i64);
+        persister.update(updates.lock().unwrap().last().unwrap().clone());
+        persister.snapshot(doc.transact().encode_state_as_update_v1(&StateVector::default()));
+        persister.close().await;
+        let (loaded, stored) = reload(&pool, board).await;
+        assert!(stored.snapshot.is_some());
+        assert!(stored.updates.is_empty());
+        assert_eq!(shape_count(&loaded), 6);
+
+        delete_board(&pool, board).await;
+    }
+}

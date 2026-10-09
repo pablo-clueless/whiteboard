@@ -1,12 +1,13 @@
 "use client";
 
-import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronUp, Keyboard, Maximize, Minus, Plus, Redo2, RotateCcw, Undo2 } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cn } from "cn";
 
 import { useEditorStore, zoomAt } from "@/stores/editor";
 import { toolRegistry } from "./tools/registry";
 import type { Editor } from "./editor-core";
+import { ArrangeMenu } from "./ArrangeMenu";
 import type { Tool } from "./types";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -249,6 +250,12 @@ export function ZoomControls({ editor }: { editor: Editor }) {
       aria-label="Zoom"
       className="absolute right-4 bottom-4 flex items-center gap-0.5 rounded-2xl border bg-white p-1 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
     >
+      {!editor.readOnly && (
+        <>
+          <ArrangeMenu editor={editor} />
+          <span className="mx-0.5 h-5 w-px bg-[#e6e6ea]" aria-hidden />
+        </>
+      )}
       <IconButton
         label="Keyboard shortcuts (?)"
         onClick={() => useEditorStore.getState().setShortcutsOpen(true)}

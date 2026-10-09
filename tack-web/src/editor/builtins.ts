@@ -8,6 +8,7 @@ import { shapeRegistry } from "./shapes/registry";
 import { toolRegistry } from "./tools/registry";
 import { eraserTool } from "./tools/eraser";
 import { frameShape } from "./shapes/frame";
+import { tableShape } from "./shapes/table";
 import { imageShape } from "./shapes/image";
 import { selectTool } from "./tools/select";
 import { imageTool } from "./tools/image";
@@ -27,6 +28,7 @@ shapeRegistry.register(arrowShape);
 shapeRegistry.register(freehandShape);
 shapeRegistry.register(textShape);
 shapeRegistry.register(imageShape);
+shapeRegistry.register(tableShape);
 
 toolRegistry.register(selectTool);
 toolRegistry.register(handTool);

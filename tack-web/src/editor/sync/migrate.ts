@@ -1,8 +1,7 @@
 import * as Y from "yjs";
 
-import { shapeRegistry } from "../shapes/registry";
-
 import { type BoardDoc, SCHEMA_VERSION } from "./board-doc";
+import { shapeRegistry } from "../shapes/registry";
 
 /**
  * Transaction origin for migrations. The undo manager tracks only local edits, so nobody can

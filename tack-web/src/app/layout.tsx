@@ -9,14 +9,17 @@ import {
   Source_Serif_4,
 } from "next/font/google";
 
+// Italics are loaded too: markdown text uses them, and the page turns off faked italics.
 const dmSans = DM_Sans({
   variable: "--font-dm-sans",
   subsets: ["latin"],
+  style: ["normal", "italic"],
 });
 
 const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   subsets: ["latin"],
+  style: ["normal", "italic"],
 });
 
 // Variable fonts: one file each covers every weight, which text shapes on the board use.
@@ -28,11 +31,13 @@ const caveat = Caveat({
 const sourceSerif = Source_Serif_4({
   variable: "--font-source-serif",
   subsets: ["latin"],
+  style: ["normal", "italic"],
 });
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
   subsets: ["latin"],
+  style: ["normal", "italic"],
 });
 
 export const metadata: Metadata = {
