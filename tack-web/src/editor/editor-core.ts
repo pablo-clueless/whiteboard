@@ -959,8 +959,12 @@ export class Editor {
       if (b) obstacles.push(b);
     }
     const { start, end } = ends;
+    // Both ends on one shape: a loop out of one side and back into another, always as an elbow
+    // (a straight one would cut through the shape).
+    const startTo = this.getBinding(arrowId, "start")?.toId;
+    const loop = !!startTo && startTo === this.getBinding(arrowId, "end")?.toId;
     const route =
-      props.route === "straight"
+      props.route === "straight" && !loop
         ? [start.point.x, start.point.y, end.point.x, end.point.y]
         : orthogonalRoute(
             start,

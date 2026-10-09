@@ -19,6 +19,21 @@ export type Terminal = "start" | "end";
 
 export const bindingId = (arrowId: string, terminal: Terminal) => `${arrowId}:${terminal}`;
 
+/**
+ * Whether an arrow end may attach at `to`, given where its other end is attached. Anywhere but
+ * the other end's own connection point: another point on the same shape makes a self-loop, but
+ * the same point would be an arrow of no length.
+ */
+export function canAttach(
+  to: { shapeId: string; anchor: Vec },
+  other: { toId: string; anchor: Vec } | null,
+): boolean {
+  if (!other || other.toId !== to.shapeId) return true;
+  return (
+    Math.abs(other.anchor.x - to.anchor.x) > 1e-6 || Math.abs(other.anchor.y - to.anchor.y) > 1e-6
+  );
+}
+
 /** The w×h box a shape draws in, if it has one. Only these shapes can be arrow targets. */
 export function localBox(shape: Shape): { w: number; h: number } | null {
   const p = shape.props as { w?: unknown; h?: unknown } | null;
