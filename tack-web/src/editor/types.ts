@@ -29,6 +29,8 @@ export type Shape<P = unknown, T extends string = string> = {
    * a group inside another is a shorter prefix shared by fewer shapes. Missing means none.
    */
   groups?: string[];
+  /** 0 (invisible) to 1 (solid). Missing means 1. */
+  opacity?: number;
 };
 
 export type Handle = { id: string; point: Vec };
@@ -72,6 +74,11 @@ export type ShapeDef<P = unknown, T extends string = string> = {
   hitTest?: (shape: Shape<P, T>, point: Vec, tolerance: number) => boolean;
   getHandles?: (shape: Shape<P, T>) => Handle[];
   onResize?: (shape: Shape<P, T>, info: ResizeInfo) => Partial<Shape<P, T>>;
+  /**
+   * Resizing from a side handle changes `props.width` live instead of stretching the shape (text
+   * rewraps as you drag). Corner handles still go through `onResize`.
+   */
+  liveWidth?: { min: number; get: (shape: Shape<P, T>) => number };
   /**
    * Connection points for arrows, in the shape's own space. Defaults to the middle of each side
    * of the outline (top, right, bottom, left).

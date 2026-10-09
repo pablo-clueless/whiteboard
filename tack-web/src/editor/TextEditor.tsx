@@ -2,10 +2,17 @@
 
 import { useEffect, useRef } from "react";
 
-import { cssFont, measureText, TEXT_LINE_HEIGHT, type TextProps, textShape } from "./shapes/text";
 import { useEditorStore } from "@/stores/editor";
+import { layoutMarkdown } from "./markdown";
 import type { Editor } from "./editor-core";
 import { useShape } from "./sync/useShapes";
+import {
+  cssFont,
+  type TextProps,
+  type TextStyleKey,
+  textShape,
+  toggleTextStyle,
+} from "./shapes/text";
 
 /**
  * Text is typed into a real textarea laid exactly over the shape, scaled and rotated to match,
@@ -50,7 +57,8 @@ function TextArea({ editor, id }: { editor: Editor; id: string }) {
 
   if (!shape || shape.type !== "text") return null;
   const p = textShape.validate(shape.props);
-  const { w, h } = measureText(p.text || " ", p);
+  // Sized like the shape, but for the raw source (markdown symbols and all) being typed.
+  const { w, h } = layoutMarkdown(p.text || " ", { ...p, markdown: false });
   const z = camera.zoom;
 
   return (
@@ -59,26 +67,62 @@ function TextArea({ editor, id }: { editor: Editor; id: string }) {
       aria-label="Text"
       value={p.text}
       spellCheck={false}
-      wrap="off"
+      wrap={p.width ? "soft" : "off"}
       onChange={(e) => editor.updateShapes({ [id]: { props: { ...p, text: e.target.value } } })}
       onBlur={finish}
       onKeyDown={(e) => {
         if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
           e.preventDefault();
           e.currentTarget.blur();
+          return;
+        }
+        const mod = e.metaKey || e.ctrlKey;
+        const key = e.key.toLowerCase();
+        const style: TextStyleKey | null =
+          mod && !e.shiftKey && key === "b"
+            ? "bold"
+            : mod && !e.shiftKey && key === "i"
+              ? "italic"
+              : mod && !e.shiftKey && key === "u"
+                ? "underline"
+                : mod && e.shiftKey && key === "x"
+                  ? "strike"
+                  : null;
+        if (!style) return;
+        e.preventDefault();
+        // With markdown on and text selected, mark up just the selection; otherwise style it all.
+        const el = e.currentTarget;
+        const [from, to] = [el.selectionStart, el.selectionEnd];
+        const marks = { bold: "**", italic: "*", strike: "~~", underline: null }[style];
+        if (p.markdown && marks && from !== to) {
+          const text = el.value;
+          const next = text.slice(0, from) + marks + text.slice(from, to) + marks + text.slice(to);
+          editor.updateShapes({ [id]: { props: { ...p, text: next } } });
+          requestAnimationFrame(() =>
+            ref.current?.setSelectionRange(from + marks.length, to + marks.length),
+          );
+        } else {
+          toggleTextStyle(editor, [id], style);
         }
       }}
       style={{
         position: "absolute",
         left: shape.x * z + camera.x,
         top: shape.y * z + camera.y,
-        // A little extra width so the next character never wraps or scrolls before it's measured.
-        width: (w + p.fontSize) * z,
+        // Fixed width: wrap like the shape. Auto: a little extra so the next character never
+        // wraps or scrolls before it's measured.
+        width: (p.width ?? w + p.fontSize) * z,
         height: h * z,
         transform: shape.rotation ? `rotate(${shape.rotation}deg)` : undefined,
         transformOrigin: "top left",
         font: cssFont(p, p.fontSize * z),
-        lineHeight: TEXT_LINE_HEIGHT,
+        lineHeight: p.lineHeight,
+        letterSpacing: p.letterSpacing * z,
+        textAlign: p.align,
+        fontStyle: p.italic ? "italic" : "normal",
+        textDecoration:
+          [p.underline && "underline", p.strike && "line-through"].filter(Boolean).join(" ") ||
+          "none",
         color: p.color,
         caretColor: p.color,
         background: "transparent",
@@ -88,7 +132,8 @@ function TextArea({ editor, id }: { editor: Editor; id: string }) {
         margin: 0,
         resize: "none",
         overflow: "hidden",
-        whiteSpace: "pre",
+        whiteSpace: p.width ? "pre-wrap" : "pre",
+        overflowWrap: "break-word",
       }}
     />
   );

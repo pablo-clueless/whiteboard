@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { cn } from "cn";
 
-import { rememberLink } from "@/lib/board-links";
+import { markNewBoard, rememberLink } from "@/lib/board-links";
 import { api } from "@/lib/api";
 
 /** Honours the OS "reduce motion" setting for every animation on the page. */
@@ -57,6 +57,7 @@ export function NewBoardButton({
       const links = await api.createBoard();
       rememberLink(links.boardId, "edit", links.editToken);
       rememberLink(links.boardId, "view", links.viewToken);
+      markNewBoard(links.boardId);
       router.push(`/b/${links.boardId}`);
     } catch {
       setState("failed");

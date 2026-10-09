@@ -3,10 +3,11 @@ import Konva from "konva";
 import RBush from "rbush";
 import * as Y from "yjs";
 
+import { arrange as arrangeLayout, type ArrangeEdge, type ArrangeMode } from "./arrange";
 import { assetUrl, IMAGE_TYPES, MAX_IMAGE_BYTES } from "@/lib/api";
 import { orthogonalRoute, type RouteEnd } from "./routing";
+import { MIN_ZOOM, useEditorStore } from "@/stores/editor";
 import { shapeRegistry } from "./shapes/registry";
-import { useEditorStore } from "@/stores/editor";
 import type { BoardDoc } from "./sync/board-doc";
 import { whenImageLoaded } from "./shapes/image";
 import type { Box, Shape, Vec } from "./types";
@@ -52,6 +53,9 @@ export const PASTE_NUDGE = 16;
 
 type ClipboardData = { shapes: Shape[]; bindings: Binding[] };
 
+/** Most shapes (besides the two it joins) a single arrow's route steers round. */
+const MAX_OBSTACLES = 24;
+
 /** How close (screen pixels) an arrow end must come to a connection point to snap to it. */
 export const PORT_SNAP = 12;
 
@@ -63,6 +67,9 @@ const CAPTURE_MS = 400;
 
 type ShapeInit = Pick<Shape, "type" | "x" | "y"> & Partial<Omit<Shape, "id" | "type" | "x" | "y">>;
 type ShapePatch = Partial<Omit<Shape, "id" | "type">>;
+
+/** Which edge or centre line `align` lines things up by. */
+export type AlignEdge = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
 
 export type ZOrderMove = "forward" | "backward" | "front" | "back";
 
@@ -96,6 +103,7 @@ export function readShape(id: string, m: Y.Map<unknown>): Shape {
     props: m.get("props"),
     v: (m.get("v") as number | undefined) ?? 1,
     groups: readGroups(m.get("groups")),
+    opacity: readOpacity(m.get("opacity")),
   };
 }
 
@@ -103,6 +111,9 @@ export function readShape(id: string, m: Y.Map<unknown>): Shape {
  * Bottom-to-top order: containers first, then by index. Ties (two clients picking the same key
  * at once) break by id so every client agrees.
  */
+const readOpacity = (v: unknown) =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+
 const readGroups = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((g): g is string => typeof g === "string") : [];
 
@@ -502,6 +513,41 @@ export class Editor {
     });
   }
 
+  /**
+   * Reroutes arrows (all of them by default) in one transaction. Routes avoid shapes found
+   * through the spatial index, which only updates after a transaction, so code that builds
+   * shapes and arrows together calls this afterwards for routes that see everything.
+   */
+  rerouteArrows(ids: string[] = this.sortedIds()) {
+    this.transact(() => {
+      for (const id of ids) if (this.getShape(id)?.type === "arrow") this.rerouteArrow(id);
+    });
+  }
+
+  /** Moves and zooms the camera so everything on the board fits on screen, with a margin. */
+  zoomToFit({
+    maxZoom = 1,
+    margin = 96,
+    box = this.contentBounds(),
+  }: { maxZoom?: number; margin?: number; box?: Box | null } = {}) {
+    if (!box) return;
+    const w = this.stage?.width() ?? window.innerWidth;
+    const h = this.stage?.height() ?? window.innerHeight;
+    const zoom = Math.max(
+      MIN_ZOOM,
+      Math.min(
+        maxZoom,
+        (w - margin * 2) / Math.max(box.w, 1),
+        (h - margin * 2) / Math.max(box.h, 1),
+      ),
+    );
+    this.ui.setCamera({
+      zoom,
+      x: w / 2 - (box.x + box.w / 2) * zoom,
+      y: h / 2 - (box.y + box.h / 2) * zoom,
+    });
+  }
+
   /** The Konva node drawing a shape, for imperative updates during gestures. */
   nodeFor(id: string): Konva.Node | undefined {
     return this.stage?.findOne(`#${id}`);
@@ -734,6 +780,31 @@ export class Editor {
       ends[terminal] = { point, dir: exitDirection(shape, b.anchor) };
       const bounds = this.getBounds(shape.id);
       if (bounds) obstacles.push(bounds);
+    }
+    // Also steer round other shapes near the way, not just the two being joined. Containers
+    // (frames) are left out: routes may pass into them. Capped, to keep rerouting cheap.
+    const bound = new Set(
+      obstacles.length
+        ? [this.getBinding(arrowId, "start")?.toId, this.getBinding(arrowId, "end")?.toId]
+        : [],
+    );
+    const span = unionBox([
+      { x: ends.start.point.x, y: ends.start.point.y, w: 0, h: 0 },
+      { x: ends.end.point.x, y: ends.end.point.y, w: 0, h: 0 },
+      ...obstacles,
+    ])!;
+    const margin = 40;
+    for (const id of this.shapesInBox({
+      x: span.x - margin,
+      y: span.y - margin,
+      w: span.w + margin * 2,
+      h: span.h + margin * 2,
+    })) {
+      if (obstacles.length >= MAX_OBSTACLES) break;
+      if (id === arrowId || bound.has(id) || this.isLinear(id) || this.isContainer(id)) continue;
+      if (this.getShape(id)?.type === "text") continue; // labels sit inside boxes anyway
+      const b = this.getBounds(id);
+      if (b) obstacles.push(b);
     }
     const { start, end } = ends;
     const route =
@@ -1052,7 +1123,9 @@ export class Editor {
       }
       if (shape.type === "image") assets.add((shape.props as { assetId: string }).assetId);
       const transform = `translate(${shape.x} ${shape.y})${shape.rotation ? ` rotate(${shape.rotation})` : ""}`;
-      parts.push(`<g transform="${transform}">${def.toSvg(shape)}</g>`);
+      const opacity =
+        shape.opacity !== undefined && shape.opacity < 1 ? ` opacity="${shape.opacity}"` : "";
+      parts.push(`<g transform="${transform}"${opacity}>${def.toSvg(shape)}</g>`);
     }
     let body = parts.join("\n");
     // Swap each image URL for its bytes.
@@ -1208,6 +1281,203 @@ export class Editor {
     });
   }
 
+  /**
+   * Sets the opacity (0–1) of the shapes among `ids` that aren't locked. `transient` (a slider
+   * mid-drag, inside start/endGesture) doesn't start a new undo step.
+   */
+  setOpacity(ids: string[], opacity: number, { transient = false }: { transient?: boolean } = {}) {
+    const value = Math.round(Math.min(1, Math.max(0, opacity)) * 100) / 100;
+    const patches = Object.fromEntries(this.unlocked(ids).map((id) => [id, { opacity: value }]));
+    if (!transient) this.markHistory();
+    this.updateShapes(patches);
+    if (!transient) this.markHistory();
+  }
+
+  /* ── Alignment ──────────────────────────────────────────────────────── */
+
+  /** Selected things as they move: whole groups (at the current level) or single shapes. */
+  private alignUnits(ids: string[]): string[][] {
+    const seen = new Map<string, string[]>();
+    for (const id of ids) {
+      if (this.isLinear(id)) continue; // arrows and lines follow what they're attached to
+      const key = this.unitGroup(id) ?? id;
+      if (!seen.has(key))
+        seen.set(
+          key,
+          this.unitOf(id).filter((m) => !this.isLinear(m)),
+        );
+    }
+    return [...seen.values()].filter((members) => members.length);
+  }
+
+  /**
+   * The shape `ids` are layered on: the topmost shape beneath them (lower in the stack) whose box
+   * holds their middle. Frames count; text and lines don't.
+   */
+  shapeUnder(ids: string[]): string | null {
+    const moving = new Set(this.expandToUnits(ids));
+    const box = unionBox([...moving].map((id) => this.getBounds(id)));
+    if (!box) return null;
+    const order = this.sortedIds();
+    const lowest = Math.min(...[...moving].map((id) => order.indexOf(id)).filter((i) => i >= 0));
+    const centre = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+    const under = this.shapesInBox({ x: centre.x, y: centre.y, w: 0, h: 0 }).filter((id) => {
+      if (moving.has(id) || this.isLinear(id) || this.getShape(id)?.type === "text") return false;
+      // Containers draw below everything, so they're always "under", whatever their index.
+      return this.isContainer(id) || order.indexOf(id) < lowest;
+    });
+    return under.at(-1) ?? null;
+  }
+
+  /**
+   * What `ids` would line up with: the box round them all when there are several things, or the
+   * shape a single thing sits on. Null when there's nothing to align to.
+   */
+  alignTarget(ids: string[]): { box: Box; under: string | null } | null {
+    const units = this.alignUnits(ids);
+    if (units.length >= 2) {
+      const box = unionBox(units.flat().map((id) => this.getBounds(id)));
+      return box ? { box, under: null } : null;
+    }
+    if (units.length !== 1) return null;
+    const under = this.shapeUnder(units[0]);
+    const box = under && this.getBounds(under);
+    return box ? { box, under } : null;
+  }
+
+  /** Lines things up by an edge or centre (see `alignTarget`). One undo step. */
+  align(ids: string[], edge: AlignEdge): boolean {
+    const target = this.alignTarget(ids);
+    if (!target || this.readOnly) return false;
+    const t = target.box;
+    const patches: Record<string, ShapePatch> = {};
+    for (const members of this.alignUnits(ids)) {
+      const b = unionBox(members.map((id) => this.getBounds(id)));
+      if (!b) continue;
+      const dx =
+        edge === "left"
+          ? t.x - b.x
+          : edge === "centerX"
+            ? t.x + t.w / 2 - (b.x + b.w / 2)
+            : edge === "right"
+              ? t.x + t.w - (b.x + b.w)
+              : 0;
+      const dy =
+        edge === "top"
+          ? t.y - b.y
+          : edge === "centerY"
+            ? t.y + t.h / 2 - (b.y + b.h / 2)
+            : edge === "bottom"
+              ? t.y + t.h - (b.y + b.h)
+              : 0;
+      if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) continue;
+      for (const id of this.unlocked(members)) {
+        const s = this.getShape(id)!;
+        patches[id] = { x: s.x + dx, y: s.y + dy };
+      }
+    }
+    if (!Object.keys(patches).length) return false;
+    this.markHistory();
+    this.updateShapes(patches);
+    this.markHistory();
+    return true;
+  }
+
+  /* ── Auto-arrange ───────────────────────────────────────────────────── */
+
+  /** Whether auto-arrange works on `ids` (two or more things) rather than the whole board. */
+  arrangesSelection(ids: string[]): boolean {
+    return this.alignUnits(ids).length >= 2;
+  }
+
+  /**
+   * What auto-arrange moves, as units (a group, a frame with what's in it, or a shape): the
+   * selection when it holds two or more things, otherwise everything on the board. Arrows follow
+   * what they connect; locked things and things inside a frame being moved stay put.
+   */
+  arrangeUnits(ids: string[]): { key: string; members: string[] }[] {
+    const scope = this.arrangesSelection(ids) ? ids : this.sortedIds();
+    const containers = new Set(scope.filter((id) => this.isContainer(id)));
+    const units: { key: string; members: string[] }[] = [];
+    for (const members of this.alignUnits(scope)) {
+      // Already carried by a frame that's moving.
+      if (members.every((m) => containers.has(this.getShape(m)?.parentId ?? ""))) continue;
+      if (members.some((m) => this.getShape(m)?.locked)) continue;
+      units.push({ key: this.unitGroup(members[0]) ?? members[0], members });
+    }
+    return units;
+  }
+
+  /** Lays things out (see `arrangeUnits`) with one of the `arrange.ts` layouts. One undo step. */
+  arrange(ids: string[], mode: ArrangeMode): boolean {
+    if (this.readOnly) return false;
+    const units = this.arrangeUnits(ids)
+      .map((u) => ({ ...u, box: unionBox(u.members.map((id) => this.getBounds(id))) }))
+      .filter((u): u is typeof u & { box: Box } => !!u.box);
+    if (units.length < 2) return false;
+    // Reading order (rows top to bottom, then left to right), which the layouts keep where
+    // they can.
+    const row = (b: Box) => Math.round((b.y + b.h / 2) / 80);
+    units.sort((a, b) => row(a.box) - row(b.box) || a.box.x - b.box.x);
+
+    // Arrows between units become the layout's connections.
+    const unitOf = new Map<string, string>();
+    for (const u of units) {
+      for (const m of u.members) unitOf.set(m, u.key);
+      if (this.isContainer(u.members[0]))
+        for (const c of this.childrenOf(u.members[0])) unitOf.set(c, u.key);
+    }
+    const edges: ArrangeEdge[] = [];
+    for (const id of this.sortedIds()) {
+      if (this.getShape(id)?.type !== "arrow") continue;
+      const from = unitOf.get(this.getBinding(id, "start")?.toId ?? "");
+      const to = unitOf.get(this.getBinding(id, "end")?.toId ?? "");
+      if (from && to) edges.push({ from, to });
+    }
+
+    const nodes = units.map((u) => ({ id: u.key, w: u.box.w, h: u.box.h }));
+    const pos = arrangeLayout(nodes, edges, mode);
+    // The layout starts where the things it moved started.
+    const origin = unionBox(units.map((u) => u.box))!;
+    const patches: Record<string, ShapePatch> = {};
+    const moved: string[] = [];
+    for (const u of units) {
+      const p = pos.get(u.key);
+      if (!p) continue;
+      const [dx, dy] = [origin.x + p.x - u.box.x, origin.y + p.y - u.box.y];
+      if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) continue;
+      // The whole unit, lines in a group included; bound arrows are rerouted afterwards anyway.
+      for (const id of this.withChildren(this.unitOf(u.members[0]))) {
+        const s = this.getShape(id);
+        if (!s || patches[id]) continue;
+        patches[id] = { x: s.x + dx, y: s.y + dy };
+        moved.push(id);
+      }
+    }
+    if (!moved.length) return false;
+    this.markHistory();
+    this.updateShapes(patches);
+    this.updateParents(moved.filter((id) => !this.isContainer(id)));
+    this.rerouteArrows();
+    this.markHistory();
+    // Bring the result into view if it spread off screen (never zooming in).
+    const box = unionBox(units.flatMap((u) => u.members.map((id) => this.getBounds(id))));
+    const { camera } = this.ui;
+    const [vw, vh] = [
+      this.stage?.width() ?? window.innerWidth,
+      this.stage?.height() ?? window.innerHeight,
+    ];
+    if (
+      box &&
+      (box.x * camera.zoom + camera.x < 0 ||
+        box.y * camera.zoom + camera.y < 0 ||
+        (box.x + box.w) * camera.zoom + camera.x > vw ||
+        (box.y + box.h) * camera.zoom + camera.y > vh)
+    )
+      this.zoomToFit({ box, maxZoom: camera.zoom });
+    return true;
+  }
+
   /** Locks or unlocks shapes, as one undo step. */
   setLocked(ids: string[], locked: boolean) {
     this.markHistory();
@@ -1282,6 +1552,13 @@ export type ShapeKnobs = {
   label: string;
   /** Which look a shape with `variants` uses. */
   variant: string;
+  /** Text renders markdown (true) or shows its source as typed. */
+  markdown: boolean;
+  /** Text wraps at this width; null grows to fit. */
+  width: number | null;
+  align: "left" | "center" | "right";
+  lineHeight: number;
+  letterSpacing: number;
   arrowStart: boolean;
   arrowEnd: boolean;
   route: "elbow" | "straight";
