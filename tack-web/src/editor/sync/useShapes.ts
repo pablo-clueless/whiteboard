@@ -16,7 +16,9 @@ function shapeIdsStore(editor: Editor): Store<string[]> {
     subscribe(onChange) {
       const handler = (events: Y.YEvent<Y.AbstractType<unknown>>[]) => {
         const relevant = events.some(
-          (e) => e.target === shapes || (e as Y.YMapEvent<unknown>).keysChanged?.has("index"),
+          (e) =>
+            e.target === shapes ||
+            ["index", "parentId"].some((k) => (e as Y.YMapEvent<unknown>).keysChanged?.has(k)),
         );
         if (!relevant) return;
         const next = editor.sortedIds();

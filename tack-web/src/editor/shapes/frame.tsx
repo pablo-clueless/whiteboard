@@ -12,6 +12,8 @@ export type FrameProps = {
   h: number;
   name: string;
   fill: string;
+  /** Hide whatever spills over the frame's edges. */
+  clip: boolean;
 };
 
 /** The label sits this many screen pixels above the frame, at a fixed screen size. */
@@ -20,7 +22,8 @@ const LABEL_SIZE = 12;
 
 /**
  * A titled area that holds other shapes. Shapes whose centre is inside it become its children
- * (their `parentId`) and move with it. Frames always draw below other shapes.
+ * (their `parentId`) and move with it, cut off at its edges unless `clip` is off. A frame that
+ * fits whole inside another nests in it. Frames always draw below other shapes.
  *
  * Only the label takes clicks: pressing inside a frame starts a box selection, as on the empty
  * board, so it's easy to work with what's inside.
@@ -29,7 +32,7 @@ export const frameShape: ShapeDef<FrameProps, "frame"> = {
   type: "frame",
   version: 1,
   isContainer: true,
-  defaultProps: { w: 480, h: 320, name: "Frame", fill: "#ffffff" },
+  defaultProps: { w: 480, h: 320, name: "Frame", fill: "#ffffff", clip: true },
   validate: (raw) => {
     const p = (raw ?? {}) as Record<string, unknown>;
     return {
@@ -37,8 +40,10 @@ export const frameShape: ShapeDef<FrameProps, "frame"> = {
       h: Math.max(1, num(p.h, 320)),
       name: str(p.name, "Frame"),
       fill: str(p.fill, "#ffffff"),
+      clip: typeof p.clip === "boolean" ? p.clip : true,
     };
   },
+  clipBox: (p) => (p.clip ? { w: p.w, h: p.h } : null),
   getBounds: boxBounds,
   onResize: boxResize,
   label: {

@@ -221,6 +221,28 @@ export function TemplatePicker({
           </DialogDescription>
         </DialogHeader>
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {TEMPLATES.map((t) => (
+            <li key={t.id}>
+              <button
+                type="button"
+                autoFocus={t.id === "blank"}
+                onClick={() => choose(t)}
+                className="group focus-visible:ring-primary/40 flex h-full w-full flex-col overflow-hidden rounded-2xl border bg-white text-left transition-shadow outline-none hover:shadow-[0_10px_24px_-14px_rgb(14_14_16/0.45)] focus-visible:ring-3"
+              >
+                <svg
+                  viewBox="0 0 160 100"
+                  aria-hidden
+                  className="group-hover:bg-primary/5 aspect-16/10 w-full bg-[#f6f6f7] transition-colors"
+                >
+                  {THUMBS[t.id]}
+                </svg>
+                <span className="flex flex-col gap-0.5 border-t p-3">
+                  <span className="text-ink text-[13px] font-semibold">{t.name}</span>
+                  <span className="text-ink/55 text-xs leading-snug">{t.description}</span>
+                </span>
+              </button>
+            </li>
+          ))}
           <li>
             <button
               type="button"
@@ -246,28 +268,6 @@ export function TemplatePicker({
               </span>
             </button>
           </li>
-          {TEMPLATES.map((t) => (
-            <li key={t.id}>
-              <button
-                type="button"
-                autoFocus={t.id === "blank"}
-                onClick={() => choose(t)}
-                className="group focus-visible:ring-primary/40 flex h-full w-full flex-col overflow-hidden rounded-2xl border bg-white text-left transition-shadow outline-none hover:shadow-[0_10px_24px_-14px_rgb(14_14_16/0.45)] focus-visible:ring-3"
-              >
-                <svg
-                  viewBox="0 0 160 100"
-                  aria-hidden
-                  className="group-hover:bg-primary/5 aspect-16/10 w-full bg-[#f6f6f7] transition-colors"
-                >
-                  {THUMBS[t.id]}
-                </svg>
-                <span className="flex flex-col gap-0.5 border-t p-3">
-                  <span className="text-ink text-[13px] font-semibold">{t.name}</span>
-                  <span className="text-ink/55 text-xs leading-snug">{t.description}</span>
-                </span>
-              </button>
-            </li>
-          ))}
         </ul>
       </DialogContent>
     </Dialog>

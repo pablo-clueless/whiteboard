@@ -124,6 +124,11 @@ function MenuItems({ editor }: { editor: Editor }) {
         label="As SVG"
         onClick={() => void exportToFile(editor, selection, "svg")}
       />
+      <Item
+        icon={Download}
+        label="As PDF"
+        onClick={() => void exportToFile(editor, selection, "pdf")}
+      />
     </Submenu>
   );
 

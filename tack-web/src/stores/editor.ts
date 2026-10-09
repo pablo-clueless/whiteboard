@@ -19,6 +19,8 @@ type EditorState = {
   editingLabelId: string | null;
   /** The group double-clicked into: clicks select what's inside it rather than the whole group. */
   editingGroupId: string | null;
+  /** The shape whose points are being edited one by one, and the point or edge picked in it. */
+  editingNodes: { id: string; node: number | null; edge: number | null } | null;
   camera: Camera;
   /** Box-select rectangle in page space while dragging one out. */
   brush: Box | null;
@@ -43,6 +45,9 @@ type EditorState = {
   setEditingText: (id: string | null) => void;
   setEditingLabel: (id: string | null) => void;
   setEditingGroup: (id: string | null) => void;
+  setEditingNodes: (
+    editing: { id: string; node: number | null; edge: number | null } | null,
+  ) => void;
   setCamera: (camera: Camera) => void;
   setBrush: (brush: Box | null) => void;
   setExporting: (ids: string[] | null) => void;
@@ -64,6 +69,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
   editingTextId: null,
   editingLabelId: null,
   editingGroupId: null,
+  editingNodes: null,
   camera: { x: 0, y: 0, zoom: 1 },
   brush: null,
   exporting: null,
@@ -75,11 +81,20 @@ export const useEditorStore = create<EditorState>()((set) => ({
   boardFull: false,
   importOpen: false,
   setTool: (toolId) => set({ toolId }),
-  setSelection: (selectedIds) => set({ selectedIds }),
+  // Point editing is for one selected shape: selecting anything else ends it.
+  setSelection: (selectedIds) =>
+    set((s) => ({
+      selectedIds,
+      editingNodes:
+        s.editingNodes && selectedIds.length === 1 && selectedIds[0] === s.editingNodes.id
+          ? s.editingNodes
+          : null,
+    })),
   setHovered: (hoveredId) => set({ hoveredId }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setEditingLabel: (editingLabelId) => set({ editingLabelId }),
   setEditingGroup: (editingGroupId) => set({ editingGroupId }),
+  setEditingNodes: (editingNodes) => set({ editingNodes }),
   setCamera: (camera) => set({ camera }),
   setBrush: (brush) => set({ brush }),
   setExporting: (exporting) => set({ exporting }),

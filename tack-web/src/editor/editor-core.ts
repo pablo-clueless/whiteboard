@@ -5,15 +5,25 @@ import * as Y from "yjs";
 
 import { arrange as arrangeLayout, type ArrangeEdge, type ArrangeMode } from "./arrange";
 import { assetUrl, IMAGE_TYPES, MAX_IMAGE_BYTES } from "@/lib/api";
+import { deflate, imagePdf, pageSize, rgbaToRgb } from "./pdf";
+import { type ArrowHead, arrowHeadSize } from "./shapes/line";
 import { orthogonalRoute, type RouteEnd } from "./routing";
 import { MIN_ZOOM, useEditorStore } from "@/stores/editor";
 import { shapeRegistry } from "./shapes/registry";
 import type { BoardDoc } from "./sync/board-doc";
 import { whenImageLoaded } from "./shapes/image";
 import type { Box, Shape, Vec } from "./types";
-import { arrowHeadSize } from "./shapes/line";
 import { onFontsLoaded } from "./fonts";
 import { unionBox } from "./geometry";
+import {
+  type Curves,
+  edgeCount,
+  insertNode,
+  moveNode,
+  removeNode,
+  shiftOutline,
+  smoothCurve,
+} from "./nodes";
 import {
   anchorPoint,
   type Binding,
@@ -80,8 +90,6 @@ type IndexItem = {
   maxY: number;
   id: string;
   z: string;
-  /** 0 for containers (frames), which draw below everything else; 1 for other shapes. */
-  rank: number;
 };
 
 /** Edits to these fields can move a shape into or out of a container. */
@@ -107,21 +115,24 @@ export function readShape(id: string, m: Y.Map<unknown>): Shape {
   };
 }
 
-/**
- * Bottom-to-top order: containers first, then by index. Ties (two clients picking the same key
- * at once) break by id so every client agrees.
- */
 const readOpacity = (v: unknown) =>
   typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
 
 const readGroups = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((g): g is string => typeof g === "string") : [];
 
+/**
+ * Bottom-to-top order: containers first (outer frames below the frames nested in them), then by
+ * index. Ties (two clients picking the same key at once) break by id so every client agrees.
+ */
 const byZ = (a: ZEntry, b: ZEntry) =>
   a.rank - b.rank || (a.z < b.z ? -1 : a.z > b.z ? 1 : a.id < b.id ? -1 : 1);
 
-const rankOf = (type: unknown) =>
-  typeof type === "string" && shapeRegistry.get(type)?.isContainer ? 0 : 1;
+const isContainerType = (type: unknown) =>
+  typeof type === "string" && !!shapeRegistry.get(type)?.isContainer;
+
+/** Containers draw first, by how deeply they're nested; everything else after them. */
+const ABOVE_CONTAINERS = 1000;
 
 /** A tiny change signal for things outside React (the spatial index, frozen shapes). */
 class Signal {
@@ -244,7 +255,7 @@ export class Editor {
   sortedIds(): string[] {
     const entries: ZEntry[] = [];
     this.board.shapes.forEach((m, id) =>
-      entries.push({ id, z: (m.get("index") as string) ?? "a0", rank: rankOf(m.get("type")) }),
+      entries.push({ id, z: (m.get("index") as string) ?? "a0", rank: this.zRank(id) }),
     );
     return entries.sort(byZ).map((e) => e.id);
   }
@@ -270,8 +281,9 @@ export class Editor {
   shapesInBox(box: Box): string[] {
     return this.spatial
       .search({ minX: box.x, minY: box.y, maxX: box.x + box.w, maxY: box.y + box.h })
+      .map((item) => ({ id: item.id, z: item.z, rank: this.zRank(item.id) }))
       .sort(byZ)
-      .map((item) => item.id);
+      .map((e) => e.id);
   }
 
   /** Bounds of everything on the board (page space), or null when it's empty. */
@@ -296,8 +308,75 @@ export class Editor {
   }
 
   isContainer(id: string): boolean {
-    const type = this.board.shapes.get(id)?.get("type");
-    return rankOf(type) === 0;
+    return isContainerType(this.board.shapes.get(id)?.get("type"));
+  }
+
+  /** The containers `id` sits in, innermost first. */
+  ancestorsOf(id: string): string[] {
+    const out: string[] = [];
+    let parent = this.board.shapes.get(id)?.get("parentId") as string | null | undefined;
+    // Bounded, in case a concurrent edit ever leaves a loop.
+    while (parent && this.board.shapes.has(parent) && !out.includes(parent) && out.length < 32) {
+      out.push(parent);
+      parent = this.board.shapes.get(parent)!.get("parentId") as string | null | undefined;
+    }
+    return out;
+  }
+
+  /**
+   * The outlines (page space, as polygons) that `id` is clipped to: one per container round it
+   * that clips its contents. Arrows are never clipped, since they often run out to other shapes.
+   * With `live`, each outline is taken from where its container is drawn right now, so the clip
+   * keeps up with a drag or resize that hasn't synced yet.
+   */
+  clipOutlines(id: string, { live = false }: { live?: boolean } = {}): Vec[][] {
+    if (this.getShape(id)?.type === "arrow") return [];
+    const out: Vec[][] = [];
+    for (const a of this.ancestorsOf(id)) {
+      const raw = (live && this.frozenShape(a)) || this.getShape(a);
+      const def = raw && shapeRegistry.get(raw.type);
+      if (!raw || !def?.clipBox) continue;
+      let box: { w: number; h: number } | null;
+      try {
+        box = def.clipBox(def.validate(raw.props));
+      } catch {
+        continue;
+      }
+      if (!box) continue;
+      const node = live ? this.nodeFor(a) : undefined;
+      const t = node
+        ? node.getTransform()
+        : new Konva.Transform().translate(raw.x, raw.y).rotate((raw.rotation * Math.PI) / 180);
+      out.push(
+        [
+          { x: 0, y: 0 },
+          { x: box.w, y: 0 },
+          { x: box.w, y: box.h },
+          { x: 0, y: box.h },
+        ].map((p) => t.point(p)),
+      );
+    }
+    return out;
+  }
+
+  /** Traces `id`'s clip (see `clipOutlines`) for a Konva `clipFunc`. */
+  traceClip(id: string, ctx: Konva.Context) {
+    const outlines = this.clipOutlines(id, { live: true });
+    // Nothing clips it (any more): a clip that takes in everything.
+    if (!outlines.length) return void ctx.rect(-1e7, -1e7, 2e7, 2e7);
+    outlines.forEach((pts, i) => {
+      // Each further outline narrows the clip: the shape shows only where they all overlap.
+      if (i > 0) {
+        ctx.clip();
+        ctx.beginPath();
+      }
+      pts.forEach((p, j) => (j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+    });
+  }
+
+  private zRank(id: string): number {
+    return this.isContainer(id) ? this.ancestorsOf(id).length : ABOVE_CONTAINERS;
   }
 
   /** Shapes whose parent is `id`. */
@@ -309,49 +388,75 @@ export class Editor {
     return out;
   }
 
-  /** `ids` plus the children of any containers among them. */
+  /** `ids` plus everything inside any containers among them, however deeply nested. */
   withChildren(ids: string[]): string[] {
     const out = new Set(ids);
-    for (const id of ids) if (this.isContainer(id)) this.childrenOf(id).forEach((c) => out.add(c));
+    const queue = ids.filter((id) => this.isContainer(id));
+    while (queue.length) {
+      for (const c of this.childrenOf(queue.shift()!)) {
+        if (out.has(c)) continue;
+        out.add(c);
+        if (this.isContainer(c)) queue.push(c);
+      }
+    }
     return [...out];
   }
 
-  /** The topmost container whose box holds a page point. */
-  containerAt(point: Vec): string | null {
+  /**
+   * The innermost container that holds a page point (or, with `box`, the whole box), other than
+   * those in `exclude`.
+   */
+  containerAt(point: Vec, { box, exclude }: { box?: Box; exclude?: Set<string> } = {}) {
     const ids = this.shapesInBox({ x: point.x, y: point.y, w: 0, h: 0 }).reverse();
     for (const id of ids) {
-      if (!this.isContainer(id)) continue;
+      if (!this.isContainer(id) || exclude?.has(id)) continue;
       const shape = this.getValidShape(id);
-      if (shape && containsPoint(shape, point)) return id;
+      if (!shape || !containsPoint(shape, point)) continue;
+      if (box) {
+        const b = this.getBounds(id);
+        const inside =
+          b &&
+          box.x >= b.x - 0.5 &&
+          box.y >= b.y - 0.5 &&
+          box.x + box.w <= b.x + b.w + 0.5 &&
+          box.y + box.h <= b.y + b.h + 0.5;
+        if (!inside) continue;
+      }
+      return id;
     }
     return null;
   }
 
   /**
-   * Re-files shapes into the container their centre is in (or none). Pass the shapes that moved
-   * or were created; a container in the list re-files everything it now covers or held before.
+   * Re-files shapes into the innermost container their centre is in (or none). A container
+   * nests in another only when it fits inside it whole. Pass the shapes that moved or were
+   * created; a container in the list re-files everything it now covers or held before.
    */
   updateParents(ids: string[]) {
     const affected = new Set<string>();
     for (const id of ids) {
-      if (!this.isContainer(id)) {
-        affected.add(id);
-        continue;
-      }
+      affected.add(id);
+      if (!this.isContainer(id)) continue;
       this.childrenOf(id).forEach((c) => affected.add(c));
       const b = this.getBounds(id);
       if (b) this.shapesInBox(b).forEach((c) => affected.add(c));
     }
     const patches: Record<string, ShapePatch> = {};
     for (const id of affected) {
-      if (this.isContainer(id)) continue;
       const shape = this.getShape(id);
-      const outer = shape?.groups?.at(-1);
-      const b = outer
-        ? unionBox(this.membersOf(outer).map((m) => this.getBounds(m)))
-        : this.getBounds(id);
-      if (!shape || !b) continue;
-      const parentId = this.containerAt({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+      if (!shape) continue;
+      const container = this.isContainer(id);
+      const outer = shape.groups?.at(-1);
+      const b =
+        outer && !container
+          ? unionBox(this.membersOf(outer).map((m) => this.getBounds(m)))
+          : this.getBounds(id);
+      if (!b) continue;
+      const centre = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+      const parentId = container
+        ? // Never inside itself or anything it holds.
+          this.containerAt(centre, { box: b, exclude: new Set(this.withChildren([id])) })
+        : this.containerAt(centre);
       if (parentId !== shape.parentId) patches[id] = { parentId };
     }
     if (Object.keys(patches).length) this.transact(() => this.writePatches(patches));
@@ -597,7 +702,7 @@ export class Editor {
     if (!shape || !b) return;
     const item = {
       ...{ minX: b.x, minY: b.y, maxX: b.x + b.w, maxY: b.y + b.h },
-      ...{ id, z: shape.index, rank: rankOf(shape.type) },
+      ...{ id, z: shape.index },
     };
     this.spatial.insert(item);
     this.indexItems.set(id, item);
@@ -764,6 +869,8 @@ export class Editor {
     if (!arrow || arrow.type !== "arrow") return;
     const props = arrow.props as { path: number[]; route?: string; strokeWidth: number };
     const path = props.path;
+    // Attached to nothing: it keeps the path it was drawn with.
+    if (!this.getBinding(arrowId, "start") && !this.getBinding(arrowId, "end")) return;
     const ends: Record<Terminal, RouteEnd> = {
       start: { point: toPage(arrow, { x: path[0], y: path[1] }), dir: null },
       end: {
@@ -780,6 +887,50 @@ export class Editor {
       ends[terminal] = { point, dir: exitDirection(shape, b.anchor) };
       const bounds = this.getBounds(shape.id);
       if (bounds) obstacles.push(bounds);
+    }
+    // Points placed by hand stay put: only the attached ends follow their shapes, carrying the
+    // curve handles beside them.
+    if ((arrow.props as { manual?: boolean }).manual) {
+      const curves = (arrow.props as { curves: Curves }).curves;
+      const page = (x: number, y: number) => toPage(arrow, { x, y });
+      const pts = path.flatMap((_, i) => {
+        if (i % 2) return [];
+        const q = page(path[i], path[i + 1]);
+        return [q.x, q.y];
+      });
+      const pageCurves: Curves = curves.map((c) => {
+        if (!c) return null;
+        const [a, b] = [page(c[0], c[1]), page(c[2], c[3])];
+        return [a.x, a.y, b.x, b.y];
+      });
+      const n = pts.length / 2;
+      let moved = moveNode(
+        pts,
+        pageCurves,
+        0,
+        ends.start.point.x - pts[0],
+        ends.start.point.y - pts[1],
+        false,
+      );
+      moved = moveNode(
+        moved.pts,
+        moved.curves,
+        n - 1,
+        ends.end.point.x - moved.pts[n * 2 - 2],
+        ends.end.point.y - moved.pts[n * 2 - 1],
+        false,
+      );
+      const [ox, oy] = [moved.pts[0], moved.pts[1]];
+      const local = shiftOutline(moved.pts, moved.curves, -ox, -oy);
+      this.writePatches({
+        [arrowId]: {
+          x: ox,
+          y: oy,
+          rotation: 0,
+          props: { ...(arrow.props as object), path: local.pts, curves: local.curves },
+        },
+      });
+      return;
     }
     // Also steer round other shapes near the way, not just the two being joined. Containers
     // (frames) are left out: routes may pass into them. Capped, to keep rerouting cheap.
@@ -846,19 +997,119 @@ export class Editor {
     for (const id of this.ui.selectedIds) {
       const shape = this.getValidShape(id);
       if (!shape || shape.locked) continue;
-      const next = withStyle(shape.props, patch);
+      let next = withStyle(shape.props, patch);
+      const p = shape.props as { manual?: boolean; nodes?: unknown };
+      // Choosing a line style hands a hand-placed arrow back to the router; choosing a number of
+      // sides or points goes back to the regular shape.
+      if ("route" in patch && p.manual) next = { ...(next as object), manual: false, curves: [] };
+      if (("sides" in patch || "points" in patch || "innerRatio" in patch) && p.nodes)
+        next = { ...(next as object), nodes: null, curves: [] };
       if (next !== shape.props) patches[id] = { props: next };
     }
     const apply = () =>
       this.transact(() => {
         this.updateShapes(patches);
-        // Switching straight/elbow moves where attached ends sit.
-        if ("route" in patch) Object.keys(patches).forEach((id) => this.rerouteArrow(id));
+        // Switching straight/elbow moves where attached ends sit; a free arrow just drops its
+        // corners and runs end to end (as an elbow, it bends once).
+        if ("route" in patch)
+          for (const id of Object.keys(patches)) {
+            const p = this.getValidShape(id)?.props as { path?: number[] } | undefined;
+            if (!this.getBinding(id, "start") && !this.getBinding(id, "end") && p?.path) {
+              if (p.path.length > 4)
+                this.writePatches({
+                  [id]: { props: { ...p, path: [p.path[0], p.path[1], ...p.path.slice(-2)] } },
+                });
+            } else this.rerouteArrow(id);
+          }
       });
     if (transient) return apply();
     this.markHistory();
     apply();
     this.markHistory();
+  }
+
+  /* ── Point editing ────────────────────────────────────────────────────── */
+
+  /** Whether a shape's outline can be edited point by point (lines, arrows, polygons, stars). */
+  canEditNodes(id: string): boolean {
+    const s = this.getShape(id);
+    return !!s && !s.locked && !this.readOnly && !!shapeRegistry.get(s.type)?.nodes;
+  }
+
+  /** A shape's editable outline, in its own space. */
+  readNodes(id: string): {
+    shape: Shape;
+    pts: number[];
+    curves: Curves;
+    closed: boolean;
+    minNodes: number;
+  } | null {
+    const shape = this.getValidShape(id);
+    const spec = shape && shapeRegistry.get(shape.type)?.nodes;
+    if (!shape || !spec) return null;
+    const { pts, curves } = spec.read(shape as never);
+    return { shape, pts, curves, closed: spec.closed, minNodes: spec.minNodes };
+  }
+
+  /**
+   * Gives a shape a new outline. `from` is the shape as it was when the edit began, which the
+   * points are relative to: polygons re-fit their box as they change, so a drag works against
+   * where it started. Attached arrow ends stay on their shapes.
+   */
+  writeNodes(id: string, pts: number[], curves: Curves, from?: Shape) {
+    const base = from ?? this.getValidShape(id);
+    const spec = base && shapeRegistry.get(base.type)?.nodes;
+    if (!base || !spec || this.readOnly) return;
+    const patch = spec.write(base as never, pts, curves);
+    this.transact(() => {
+      this.updateShapes({ [id]: patch as ShapePatch });
+      if (base.type === "arrow") this.rerouteArrow(id);
+      this.rerouteArrowsBoundTo([id]);
+    });
+  }
+
+  /**
+   * Makes edges curved (bending smoothly through their neighbours, so curving them all draws a
+   * spline through every point) or straight. All edges unless `edges` says which. One undo step.
+   */
+  setEdgesCurved(id: string, curved: boolean, edges?: number[]) {
+    const o = this.readNodes(id);
+    if (!o) return;
+    const all = Array.from({ length: edgeCount(o.pts.length / 2, o.closed) }, (_, i) => i);
+    const curves = [...o.curves];
+    for (const e of edges ?? all)
+      curves[e] = curved ? (curves[e] ?? smoothCurve(o.pts, e, o.closed)) : null;
+    this.markHistory();
+    this.writeNodes(id, o.pts, curves, o.shape);
+    this.markHistory();
+  }
+
+  /** Adds a point in the middle of an edge. One undo step; returns the new point's index. */
+  addNode(id: string, edge: number): number | null {
+    const o = this.readNodes(id);
+    if (!o) return null;
+    const r = insertNode(o.pts, o.curves, edge);
+    this.markHistory();
+    this.writeNodes(id, r.pts, r.curves, o.shape);
+    this.markHistory();
+    return r.index;
+  }
+
+  /**
+   * Removes a point, joining the edges either side. An arrow's ends stay (they're what attaches
+   * it). False when it can't go: too few points would be left.
+   */
+  deleteNode(id: string, index: number): boolean {
+    const o = this.readNodes(id);
+    if (!o) return false;
+    const n = o.pts.length / 2;
+    if (o.shape.type === "arrow" && (index === 0 || index === n - 1)) return false;
+    const r = removeNode(o.pts, o.curves, index, o.closed, o.minNodes);
+    if (!r) return false;
+    this.markHistory();
+    this.writeNodes(id, r.pts, r.curves, o.shape);
+    this.markHistory();
+    return true;
   }
 
   /**
@@ -1051,6 +1302,45 @@ export class Editor {
    * moment it takes, so shapes outside the viewport are drawn too.
    */
   async exportPng(onlyIds?: string[]): Promise<Blob | null> {
+    return this.renderExport(
+      onlyIds,
+      (stage) => stage.toBlob({ pixelRatio: 2, mimeType: "image/png" }) as Promise<Blob>,
+    );
+  }
+
+  /**
+   * The board (or the given shapes) as a one-page PDF, the page sized to fit them. Drawn as the
+   * PNG export is (at up to 2× for sharp print), within what a canvas can hold.
+   */
+  async exportPdf(onlyIds?: string[], title = "Tack board"): Promise<Blob | null> {
+    const rendered = await this.renderExport(onlyIds, (stage) => {
+      const [w, h] = [stage.width(), stage.height()];
+      // Browsers cap canvases at about 16k pixels a side (and ~268M pixels in all).
+      const ratio = Math.max(0.25, Math.min(2, 8192 / Math.max(w, h), Math.sqrt(64e6 / (w * h))));
+      const canvas = stage.toCanvas({ pixelRatio: ratio });
+      const data = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+      return Promise.resolve({ w, h, cw: canvas.width, ch: canvas.height, data });
+    });
+    if (!rendered) return null;
+    const page = pageSize(rendered.w, rendered.h);
+    return imagePdf({
+      width: rendered.cw,
+      height: rendered.ch,
+      pixels: await deflate(rgbaToRgb(rendered.data)),
+      pageWidth: page.w,
+      pageHeight: page.h,
+      title,
+    });
+  }
+
+  /**
+   * Draws the given shapes (or the whole board) on a white offscreen stage just big enough for
+   * them, and hands it to `draw`.
+   */
+  private async renderExport<T>(
+    onlyIds: string[] | undefined,
+    draw: (stage: Konva.Stage) => Promise<T>,
+  ): Promise<T | null> {
     const { ids, wanted, box } = this.exportTarget(onlyIds) ?? {};
     if (!ids || !wanted || !box || !this.stage) return null;
     const pad = EXPORT_PADDING;
@@ -1086,7 +1376,7 @@ export class Editor {
         new Konva.Rect({ width: box.w + pad * 2, height: box.h + pad * 2, fill: "#ffffff" }),
       );
       off.add(background, copy);
-      return (await off.toBlob({ pixelRatio: 2, mimeType: "image/png" })) as Blob;
+      return await draw(off);
     } finally {
       off?.destroy();
       this.ui.setExporting(null);
@@ -1114,6 +1404,7 @@ export class Editor {
     let skipped = 0;
     const assets = new Set<string>();
     const parts: string[] = [];
+    const clips: string[] = [];
     for (const id of ids) {
       const shape = this.getValidShape(id);
       const def = shape && shapeRegistry.get(shape.type);
@@ -1125,9 +1416,18 @@ export class Editor {
       const transform = `translate(${shape.x} ${shape.y})${shape.rotation ? ` rotate(${shape.rotation})` : ""}`;
       const opacity =
         shape.opacity !== undefined && shape.opacity < 1 ? ` opacity="${shape.opacity}"` : "";
-      parts.push(`<g transform="${transform}"${opacity}>${def.toSvg(shape)}</g>`);
+      let part = `<g transform="${transform}"${opacity}>${def.toSvg(shape)}</g>`;
+      // Cut off at the edges of the frames it's in, innermost first.
+      for (const pts of this.clipOutlines(id)) {
+        const clipId = `clip${clips.length}`;
+        clips.push(
+          `<clipPath id="${clipId}"><polygon points="${pts.map((p) => `${p.x},${p.y}`).join(" ")}"/></clipPath>`,
+        );
+        part = `<g clip-path="url(#${clipId})">${part}</g>`;
+      }
+      parts.push(part);
     }
-    let body = parts.join("\n");
+    let body = (clips.length ? `<defs>${clips.join("")}</defs>\n` : "") + parts.join("\n");
     // Swap each image URL for its bytes.
     await Promise.all(
       [...assets].map(async (assetId) => {
@@ -1425,7 +1725,7 @@ export class Editor {
     for (const u of units) {
       for (const m of u.members) unitOf.set(m, u.key);
       if (this.isContainer(u.members[0]))
-        for (const c of this.childrenOf(u.members[0])) unitOf.set(c, u.key);
+        for (const c of this.withChildren([u.members[0]])) unitOf.set(c, u.key);
     }
     const edges: ArrangeEdge[] = [];
     for (const id of this.sortedIds()) {
@@ -1561,7 +1861,11 @@ export type ShapeKnobs = {
   letterSpacing: number;
   arrowStart: boolean;
   arrowEnd: boolean;
+  startHead: ArrowHead;
+  endHead: ArrowHead;
   route: "elbow" | "straight";
+  /** A frame hides what spills over its edges. */
+  clip: boolean;
 };
 
 /** Any angle as its equivalent in (-180, 180], so 180 reads as 180 rather than -180. */

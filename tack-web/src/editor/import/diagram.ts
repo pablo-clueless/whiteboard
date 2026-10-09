@@ -1,22 +1,29 @@
 import dagre from "@dagrejs/dagre";
 
+import { layoutSequence, MESSAGE_TEXT, NOTE_TEXT, PARTICIPANT_TEXT } from "./sequence";
 import { fieldPort, type TableField, tableHeight, tableWidth } from "../shapes/table";
 import { looksLikeDbml, parseDbml, type RefKind, type Schema } from "./dbml";
 import { type Builder, placeBuilt } from "../templates";
 import type { Editor } from "../editor-core";
 import { measureText } from "../shapes/text";
 import {
+  type ClassDiagram,
   type Flowchart,
   type FlowNodeShape,
   mermaidKind,
+  parseClassDiagram,
   parseErDiagram,
   parseFlowchart,
+  parseSequenceDiagram,
+  type SequenceDiagram,
 } from "./mermaid";
 
 /** What some text turned out to be, ready to draw (or why it can't be). */
 export type Detected =
   | { kind: "dbml" | "mermaid-er"; schema: Schema }
   | { kind: "flowchart"; chart: Flowchart }
+  | { kind: "class"; diagram: ClassDiagram }
+  | { kind: "sequence"; diagram: SequenceDiagram }
   | { kind: "unsupported"; what: string };
 
 /** Recognises DBML or Mermaid. Null when the text is neither. */
@@ -24,6 +31,8 @@ export function detectDiagram(text: string): Detected | null {
   const kind = mermaidKind(text);
   if (kind === "flowchart") return { kind: "flowchart", chart: parseFlowchart(text) };
   if (kind === "er") return { kind: "mermaid-er", schema: parseErDiagram(text) };
+  if (kind === "class") return { kind: "class", diagram: parseClassDiagram(text) };
+  if (kind === "sequence") return { kind: "sequence", diagram: parseSequenceDiagram(text) };
   if (kind === "other") {
     const what = text
       .trim()
@@ -44,26 +53,50 @@ export function describe(d: Detected): string {
     const c = d.chart;
     return `Mermaid flowchart · ${plural(c.nodes.length, "node")}, ${plural(c.edges.length, "link")}`;
   }
+  if (d.kind === "class") {
+    const c = d.diagram;
+    return `Mermaid class diagram · ${plural(c.classes.length, "class", "classes")}, ${plural(c.relations.length, "relationship")}`;
+  }
+  if (d.kind === "sequence") {
+    const s = d.diagram;
+    const messages = s.events.filter((e) => e.kind === "message").length;
+    return `Mermaid sequence diagram · ${plural(s.participants.length, "participant")}, ${plural(messages, "message")}`;
+  }
   const s = d.schema;
   const label = d.kind === "dbml" ? "DBML" : "Mermaid ER diagram";
   return `${label} · ${plural(s.tables.length, "table")}, ${plural(s.refs.length, "relationship")}`;
 }
 
 export const warningsOf = (d: Detected): string[] =>
-  d.kind === "unsupported" ? [] : d.kind === "flowchart" ? d.chart.warnings : d.schema.warnings;
+  d.kind === "unsupported"
+    ? []
+    : d.kind === "flowchart"
+      ? d.chart.warnings
+      : d.kind === "class" || d.kind === "sequence"
+        ? d.diagram.warnings
+        : d.schema.warnings;
 
 /** Whether there's anything to draw. */
 export const drawable = (d: Detected | null): d is Exclude<Detected, { kind: "unsupported" }> =>
   !!d &&
   d.kind !== "unsupported" &&
-  (d.kind === "flowchart" ? d.chart.nodes.length > 0 : d.schema.tables.length > 0);
+  (d.kind === "flowchart"
+    ? d.chart.nodes.length > 0
+    : d.kind === "class"
+      ? d.diagram.classes.length > 0
+      : d.kind === "sequence"
+        ? d.diagram.participants.length > 0
+        : d.schema.tables.length > 0);
 
 /** Draws a detected diagram in the middle of the screen. One undo step; returns the new ids. */
 export function insertDiagram(editor: Editor, d: Detected): string[] {
   if (!drawable(d)) return [];
-  const ids = placeBuilt(editor, (b) =>
-    d.kind === "flowchart" ? buildFlowchart(b, d.chart) : buildSchema(b, d.schema),
-  );
+  const ids = placeBuilt(editor, (b) => {
+    if (d.kind === "flowchart") buildFlowchart(b, d.chart);
+    else if (d.kind === "class") buildClassDiagram(b, d.diagram);
+    else if (d.kind === "sequence") buildSequence(b, d.diagram);
+    else buildSchema(b, d.schema);
+  });
   editor.select([]);
   return ids;
 }
@@ -315,5 +348,208 @@ function buildFlowchart(b: Builder, chart: Flowchart) {
       arrowStart: e.arrowStart,
       arrowEnd: e.arrowEnd,
     });
+  }
+}
+
+/* ── Class diagrams ─────────────────────────────────────────────────────── */
+
+/** Header colours by annotation; plain classes keep the table blue. */
+const CLASS_COLORS: Record<string, string> = {
+  interface: "#0c8599",
+  abstract: "#5f3dc4",
+  enumeration: "#7a4fb5",
+  enum: "#7a4fb5",
+};
+
+const LINK_TEXT = { fontSize: 12, fontFamily: "sans", fontWeight: 500 };
+
+/** Middle of each side, as an anchor (a fraction of the box). */
+const SIDE = {
+  top: { x: 0.5, y: 0 },
+  bottom: { x: 0.5, y: 1 },
+  left: { x: 0, y: 0.5 },
+  right: { x: 1, y: 0.5 },
+} as const;
+
+/** The marks that make an end the "general" one: the class inherited from, or the whole. */
+const isParentHead = (h: string | null) =>
+  h === "triangle" || h === "diamond" || h === "diamondFilled";
+
+function buildClassDiagram(b: Builder, d: ClassDiagram) {
+  const cards = new Map(
+    d.classes.map((c) => {
+      // Attributes, then methods, as UML lists them.
+      const fields: TableField[] = [
+        ...c.members.filter((m) => !m.method),
+        ...c.members.filter((m) => m.method),
+      ].map((m) => ({ name: m.name, type: m.type }));
+      const name = c.annotation ? `«${c.annotation}» ${c.label}` : c.label;
+      const color = c.annotation
+        ? (CLASS_COLORS[c.annotation.toLowerCase()] ?? CLASS_COLORS.abstract)
+        : undefined;
+      return [
+        c.id,
+        { name, fields, color, w: tableWidth(name, fields), h: tableHeight(fields.length) },
+      ];
+    }),
+  );
+
+  const g = new dagre.graphlib.Graph({ multigraph: true, compound: true });
+  g.setGraph({ rankdir: d.direction, nodesep: 60, ranksep: 90, marginx: 0, marginy: 0 });
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const [id, c] of cards) g.setNode(id, { width: c.w, height: c.h });
+  for (const ns of d.namespaces) {
+    const key = `namespace:${ns.id}`;
+    g.setNode(key, { paddingTop: 36, paddingLeft: 24, paddingRight: 24, paddingBottom: 24 });
+    for (const id of ns.nodes) if (g.hasNode(id)) g.setParent(id, key);
+  }
+  d.relations.forEach((r, i) => {
+    if (r.from === r.to) return;
+    // Parents (and wholes) rank before their children (and parts), so inheritance reads down.
+    const [a, z] = isParentHead(r.fromHead)
+      ? [r.from, r.to]
+      : isParentHead(r.toHead)
+        ? [r.to, r.from]
+        : [r.from, r.to];
+    const t = r.label ? measureText(r.label, LINK_TEXT) : null;
+    g.setEdge(a, z, t ? { width: t.w + 16, height: 22 } : {}, `r${i}`);
+  });
+  dagre.layout(g);
+
+  for (const ns of d.namespaces) {
+    const c = g.node(`namespace:${ns.id}`);
+    if (c && c.width && c.height)
+      b.frame(ns.label, c.x - c.width / 2, c.y - c.height / 2, c.width, c.height);
+  }
+  const ids = new Map<string, string>();
+  const boxes = new Map<string, { x: number; y: number; w: number; h: number }>();
+  for (const [id, c] of cards) {
+    const node = g.node(id);
+    const [x, y] = [node.x - c.w / 2, node.y - c.h / 2];
+    boxes.set(id, { x: node.x, y: node.y, w: c.w, h: c.h });
+    ids.set(id, b.table(c.name, c.fields, x, y, c.color));
+  }
+
+  for (const r of d.relations) {
+    const from = ids.get(r.from);
+    const to = ids.get(r.to);
+    if (!from || !to) continue;
+    const [a, z] = [boxes.get(r.from)!, boxes.get(r.to)!];
+    let anchors: [{ x: number; y: number }, { x: number; y: number }];
+    if (from === to) {
+      // A class related to itself: out of the right side, back in at the top.
+      anchors = [
+        { x: 1, y: 0.3 },
+        { x: 0.8, y: 0 },
+      ];
+    } else if (Math.abs(z.y - a.y) > (a.h + z.h) / 2) {
+      // On different rows: bottom to top (or the other way).
+      anchors = z.y > a.y ? [SIDE.bottom, SIDE.top] : [SIDE.top, SIDE.bottom];
+    } else {
+      anchors = z.x > a.x ? [SIDE.right, SIDE.left] : [SIDE.left, SIDE.right];
+    }
+    b.connectAt(from, anchors[0], to, anchors[1], {
+      stroke: INK,
+      strokeWidth: 1.5,
+      dashed: r.dashed,
+      arrowStart: !!r.fromHead,
+      startHead: r.fromHead ?? "arrow",
+      arrowEnd: !!r.toHead,
+      endHead: r.toHead ?? "arrow",
+      label: r.label ?? "",
+      startLabel: r.fromCard?.slice(0, 8) ?? "",
+      endLabel: r.toCard?.slice(0, 8) ?? "",
+    });
+  }
+}
+
+/* ── Sequence diagrams ──────────────────────────────────────────────────── */
+
+const LIFELINE = "#9a9aa3";
+const BLOCK_EDGE = "#a5adc6";
+
+function buildSequence(b: Builder, d: SequenceDiagram) {
+  const layout = layoutSequence(d, (text, fontSize, fontWeight) =>
+    measureText(text, { fontSize, fontFamily: "sans", fontWeight }),
+  );
+  const noHeads = { arrowStart: false, arrowEnd: false };
+  // Bottom to top: blocks, lifelines, participants, notes, then messages.
+  for (const block of layout.blocks) {
+    const group = [crypto.randomUUID()];
+    b.shape(
+      "rect",
+      block.x,
+      block.y,
+      { w: block.w, h: block.h, fill: "#4c6ef50d", stroke: BLOCK_EDGE, strokeWidth: 1, radius: 6 },
+      group,
+    );
+    b.shape(
+      "text",
+      block.x + 10,
+      block.y + 7,
+      { text: block.title, fontSize: 12, fontWeight: 700, color: "#4a4f6a" },
+      group,
+    );
+    for (const div of block.dividers) {
+      b.path(
+        block.x,
+        div.y,
+        [0, 0, block.w, 0],
+        { ...noHeads, dashed: true, stroke: BLOCK_EDGE, strokeWidth: 1 },
+        group,
+      );
+      if (div.label)
+        b.shape(
+          "text",
+          block.x + 10,
+          div.y + 6,
+          { text: div.label, fontSize: 12, fontWeight: 600, color: "#4a4f6a" },
+          group,
+        );
+    }
+  }
+  for (const line of layout.lifelines)
+    b.path(line.x, line.y1, [0, 0, 0, line.y2 - line.y1], {
+      ...noHeads,
+      dashed: true,
+      stroke: LIFELINE,
+      strokeWidth: 1,
+    });
+  const text = { fontSize: PARTICIPANT_TEXT, fontWeight: 600 };
+  for (const p of layout.participants) {
+    const look = p.actor
+      ? { fill: "#e7f5ff", stroke: INK, strokeWidth: 1.5, radius: 22 }
+      : { fill: "#ffffff", stroke: INK, strokeWidth: 1.5, radius: 6 };
+    for (const box of [p.top, p.bottom])
+      b.labelled("rect", box.x, box.y, box.w, box.h, p.label, look, text);
+  }
+  for (const note of layout.notes)
+    b.labelled(
+      "rect",
+      note.x,
+      note.y,
+      note.w,
+      note.h,
+      note.text,
+      { fill: "#fff3b0", stroke: "#f0dc7a", strokeWidth: 1, radius: 4 },
+      { fontSize: NOTE_TEXT },
+    );
+  for (const m of layout.messages) {
+    const group = m.text ? [crypto.randomUUID()] : undefined;
+    b.path(
+      0,
+      0,
+      m.points,
+      {
+        arrowStart: m.both,
+        arrowEnd: m.head,
+        dashed: m.dashed,
+        stroke: INK,
+        strokeWidth: 1.5,
+      },
+      group,
+    );
+    if (m.text)
+      b.text(m.text, m.textAt.x, m.textAt.y, { fontSize: MESSAGE_TEXT, color: INK }, group);
   }
 }
