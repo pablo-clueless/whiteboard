@@ -136,6 +136,34 @@ export class Builder {
     return id;
   }
 
+  /**
+   * An arrow attached at exact points: each anchor a fraction of its shape's box, e.g.
+   * { x: 0.5, y: 0 } for the middle of the top edge.
+   */
+  connectAt(
+    from: string,
+    fromAnchor: Vec,
+    to: string,
+    toAnchor: Vec,
+    props: Record<string, unknown> = {},
+  ) {
+    const id = this.shape("arrow", 0, 0, { path: [0, 0, 0, 0], ...props });
+    this.editor.setBinding(id, "start", { toId: from, anchor: fromAnchor });
+    this.editor.setBinding(id, "end", { toId: to, anchor: toAnchor });
+    return id;
+  }
+
+  /** A free-standing arrow (or, without heads, a line) through `points`, relative to (x, y). */
+  path(
+    x: number,
+    y: number,
+    points: number[],
+    props: Record<string, unknown> = {},
+    groups?: string[],
+  ) {
+    return this.shape("arrow", x, y, { route: "straight", ...props, path: points }, groups);
+  }
+
   /** An arrow from one shape's side to another's, attached at both ends. */
   connect(
     from: string,
@@ -293,7 +321,7 @@ export const TEMPLATES: Template[] = [
 
 /**
  * Builds shapes with `build` (in its own coordinates), moves them so their middle sits in the
- * middle of the screen, routes their arrows round everything now on the board, and zooms to fit
+ * middle of the screen (or, if something's there, in clear space to the right), routes their arrows round everything now on the board, and zooms to fit
  * them. All one undo step. Returns the new shapes' ids, selected.
  */
 export function placeBuilt(editor: Editor, build: (b: Builder) => void): string[] {
@@ -311,8 +339,21 @@ export function placeBuilt(editor: Editor, build: (b: Builder) => void): string[
     made = editor.sortedIds().filter((id) => !before.has(id));
     const box = unionBox(made.map((id) => editor.getBounds(id)));
     if (!box) return;
-    const dx = centre.x - (box.x + box.w / 2);
-    const dy = centre.y - (box.y + box.h / 2);
+    // The middle of the screen, unless that would land on what's already there (it would end up
+    // in frames, and tangled with other shapes): then just right of everything. The spatial
+    // index doesn't hold the new shapes until this transaction ends, so it only sees the old.
+    let target = { x: centre.x - box.w / 2, y: centre.y - box.h / 2 };
+    const margin = 40;
+    const covered = editor.shapesInBox({
+      x: target.x - margin,
+      y: target.y - margin,
+      w: box.w + margin * 2,
+      h: box.h + margin * 2,
+    }).length;
+    const content = covered ? editor.contentBounds() : null;
+    if (content) target = { x: content.x + content.w + margin * 3, y: content.y };
+    const dx = target.x - box.x;
+    const dy = target.y - box.y;
     editor.updateShapes(
       Object.fromEntries(
         made.map((id) => {

@@ -44,12 +44,16 @@ function cleanLines(source: string): string[] {
 }
 
 /** The diagram type on the first line, if it's one Tack can draw. */
-export function mermaidKind(source: string): "flowchart" | "er" | "other" | null {
+export function mermaidKind(
+  source: string,
+): "flowchart" | "er" | "class" | "sequence" | "other" | null {
   const first = cleanLines(source)[0] ?? "";
   if (/^(flowchart|graph)\b/i.test(first)) return "flowchart";
   if (/^erDiagram\b/i.test(first)) return "er";
+  if (/^classDiagram(-v2)?\b/i.test(first)) return "class";
+  if (/^sequenceDiagram\b/i.test(first)) return "sequence";
   if (
-    /^(sequenceDiagram|classDiagram|stateDiagram(-v2)?|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4\w*|sankey(-beta)?|xychart(-beta)?|block(-beta)?)\b/i.test(
+    /^(stateDiagram(-v2)?|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4\w*|sankey(-beta)?|xychart(-beta)?|block(-beta)?)\b/i.test(
       first,
     )
   )
@@ -283,4 +287,324 @@ export function parseErDiagram(source: string): Schema {
     warnings.push(`Skipped "${line}"`);
   }
   return { tables: [...tables.values()], refs, warnings };
+}
+
+/* ── Class diagrams ─────────────────────────────────────────────────────── */
+
+/** The mark at a relationship end, as arrows draw them (`ArrowHead` in shapes/line). */
+export type RelationHead = "arrow" | "triangle" | "diamond" | "diamondFilled";
+
+export type ClassMember = { name: string; type: string; method: boolean };
+
+export type UmlClass = {
+  id: string;
+  label: string;
+  /** `<<interface>>`, `<<abstract>>`, `<<enumeration>>`… without the brackets. */
+  annotation?: string;
+  members: ClassMember[];
+};
+
+export type ClassRelation = {
+  from: string;
+  to: string;
+  fromHead: RelationHead | null;
+  toHead: RelationHead | null;
+  dashed: boolean;
+  label?: string;
+  fromCard?: string;
+  toCard?: string;
+};
+
+export type ClassDiagram = {
+  kind: "class";
+  direction: FlowDirection;
+  classes: UmlClass[];
+  relations: ClassRelation[];
+  /** Namespaces, drawn as frames. */
+  namespaces: Subgraph[];
+  warnings: string[];
+};
+
+/** Mermaid writes generics with tildes: `List~int~` is `List<int>`. */
+const generics = (s: string) => s.replace(/~([^~]*)~/g, "<$1>");
+
+/** A class name: plain (maybe generic, `Box~T~`) or in backticks. */
+const CLASS_NAME = String.raw`(?:\x60[^\x60]+\x60|[\w.$-]+(?:~[^~]*~)?)`;
+
+const RELATION = new RegExp(
+  String.raw`^(${CLASS_NAME})\s*(?:"([^"]*)"\s*)?(<\||\*|o|<)?(--|\.\.)(\|>|\*|o|>)?\s*(?:"([^"]*)"\s*)?(${CLASS_NAME})\s*(?::\s*(.*))?$`,
+);
+const CLASS_DEF = new RegExp(
+  String.raw`^class\s+(${CLASS_NAME})(?:\s*\["([^"]*)"\])?(?:\s*<<\s*(.+?)\s*>>)?(?:\s*:::[\w-]+)?\s*(\{\s*(\})?)?$`,
+);
+const ANNOTATION = new RegExp(String.raw`^<<\s*(.+?)\s*>>\s*(${CLASS_NAME})$`);
+const MEMBER_LINE = new RegExp(String.raw`^(${CLASS_NAME})\s*:\s*(.+)$`);
+
+const HEAD: Record<string, RelationHead> = {
+  "<|": "triangle",
+  "|>": "triangle",
+  "*": "diamondFilled",
+  o: "diamond",
+  "<": "arrow",
+  ">": "arrow",
+};
+
+/**
+ * One member line: a method (`+eat(food) bool`, `+area()$ : double`) or an attribute, in
+ * Mermaid's `+String name` order or as `name: String`.
+ */
+export function parseMember(raw: string): ClassMember | null {
+  let s = raw.trim();
+  if (!s) return null;
+  const open = s.indexOf("(");
+  if (open >= 0) {
+    const close = s.lastIndexOf(")");
+    if (close < open) return { name: generics(s), type: "", method: true };
+    let name = s.slice(0, close + 1);
+    let rest = s.slice(close + 1).trim();
+    // `$` static, `*` abstract.
+    const classifier = rest.match(/^[$*]/);
+    if (classifier) {
+      name += classifier[0];
+      rest = rest.slice(1).trim();
+    }
+    return { name: generics(name), type: generics(rest.replace(/^:\s*/, "")), method: true };
+  }
+  const colon = s.match(/^([+\-#~]?[\w$]+[$*]?)\s*:\s*(.+)$/);
+  if (colon) return { name: colon[1], type: generics(colon[2].trim()), method: false };
+  // A leading + - # ~ is visibility (a generic's tilde never starts a member).
+  const visibility = /^[+\-#~]/.test(s) ? s[0] : "";
+  if (visibility) s = s.slice(1).trim();
+  const parts = s.split(/\s+/);
+  const name = parts.pop()!;
+  return { name: visibility + name, type: generics(parts.join(" ")), method: false };
+}
+
+export function parseClassDiagram(source: string): ClassDiagram {
+  const lines = cleanLines(source);
+  lines.shift(); // classDiagram
+  let direction: FlowDirection = "TB";
+  const classes = new Map<string, UmlClass>();
+  const relations: ClassRelation[] = [];
+  const namespaces: Subgraph[] = [];
+  const warnings: string[] = [];
+  let namespace: Subgraph | null = null;
+  let notes = 0;
+
+  const cls = (raw: string) => {
+    const name = raw.startsWith("`") ? raw.slice(1, -1) : raw;
+    const id = name.replace(/~[^~]*~$/, "");
+    let c = classes.get(id);
+    if (!c) {
+      c = { id, label: generics(name), members: [] };
+      classes.set(id, c);
+    } else if (name !== id) c.label = generics(name);
+    if (namespace && !namespace.nodes.includes(id)) namespace.nodes.push(id);
+    return c;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const dir = line.match(/^direction\s+(TB|TD|BT|LR|RL)$/i);
+    if (dir) {
+      const d = dir[1].toUpperCase();
+      direction = (d === "TD" ? "TB" : d) as FlowDirection;
+      continue;
+    }
+    if (/^(classDef|cssClass|style|click|link|callback)\b/i.test(line)) continue;
+    if (/^note\b/i.test(line)) {
+      notes++;
+      continue;
+    }
+    const ns = line.match(/^namespace\s+([\w.$-]+)\s*\{$/);
+    if (ns) {
+      namespace = { id: ns[1], label: ns[1], nodes: [] };
+      namespaces.push(namespace);
+      continue;
+    }
+    if (line === "}" && namespace) {
+      namespace = null;
+      continue;
+    }
+    const annotation = line.match(ANNOTATION);
+    if (annotation) {
+      cls(annotation[2]).annotation = annotation[1];
+      continue;
+    }
+    const def = line.match(CLASS_DEF);
+    if (def) {
+      const c = cls(def[1]);
+      if (def[2]) c.label = def[2];
+      if (def[3]) c.annotation = def[3];
+      if (def[4] && !def[5]) {
+        for (i++; i < lines.length && lines[i] !== "}"; i++) {
+          const a = lines[i].match(/^<<\s*(.+?)\s*>>$/);
+          if (a) c.annotation = a[1];
+          else {
+            const m = parseMember(lines[i]);
+            if (m) c.members.push(m);
+          }
+        }
+      }
+      continue;
+    }
+    const rel = line.match(RELATION);
+    if (rel) {
+      const from = cls(rel[1]).id;
+      const to = cls(rel[7]).id;
+      relations.push({
+        from,
+        to,
+        fromHead: rel[3] ? HEAD[rel[3]] : null,
+        toHead: rel[5] ? HEAD[rel[5]] : null,
+        dashed: rel[4] === "..",
+        label: rel[8]?.trim() || undefined,
+        fromCard: rel[2] || undefined,
+        toCard: rel[6] || undefined,
+      });
+      continue;
+    }
+    const member = line.match(MEMBER_LINE);
+    if (member) {
+      const m = parseMember(member[2]);
+      if (m) cls(member[1]).members.push(m);
+      continue;
+    }
+    warnings.push(`Skipped "${line}"`);
+  }
+  if (notes) warnings.push(`${notes} note${notes === 1 ? " was" : "s were"} left out`);
+  return {
+    kind: "class",
+    direction,
+    classes: [...classes.values()],
+    relations,
+    namespaces,
+    warnings,
+  };
+}
+
+/* ── Sequence diagrams ──────────────────────────────────────────────────── */
+
+export type Participant = { id: string; label: string; actor: boolean };
+
+export type SequenceEvent =
+  | {
+      kind: "message";
+      from: string;
+      to: string;
+      text: string;
+      dashed: boolean;
+      /** An arrowhead at the receiving end (and, with `both`, at the sending end too). */
+      head: boolean;
+      both: boolean;
+    }
+  | { kind: "note"; at: string[]; side: "left" | "right" | "over"; text: string }
+  | { kind: "start"; block: string; label: string }
+  | { kind: "else"; label: string }
+  | { kind: "end" };
+
+export type SequenceDiagram = {
+  kind: "sequence";
+  participants: Participant[];
+  events: SequenceEvent[];
+  autonumber: boolean;
+  warnings: string[];
+};
+
+/** Longest first, so `-->>` isn't read as `-->` followed by `>`. */
+const SEQ_ARROW = String.raw`<<-->>|<<->>|-->>|->>|-->|->|--x|-x|--\)|-\)`;
+const MESSAGE = new RegExp(
+  String.raw`^([^\s:]+?)\s*(${SEQ_ARROW})\s*[+-]?\s*([^\s:]+?)\s*(?::\s*(.*))?$`,
+);
+const BLOCK = /^(loop|alt|opt|par|critical|break|rect|box)\b\s*(.*)$/i;
+
+export function parseSequenceDiagram(source: string): SequenceDiagram {
+  const lines = cleanLines(source);
+  lines.shift(); // sequenceDiagram
+  const participants = new Map<string, Participant>();
+  const events: SequenceEvent[] = [];
+  const warnings: string[] = [];
+  let autonumber = false;
+  // Open blocks. `box` only groups participants: it ends like the others but isn't drawn.
+  const open: string[] = [];
+
+  const who = (id: string, label?: string, actor = false) => {
+    let p = participants.get(id);
+    if (!p) {
+      p = { id, label: label ?? id, actor };
+      participants.set(id, p);
+    } else {
+      if (label) p.label = label;
+      if (actor) p.actor = true;
+    }
+    return p.id;
+  };
+
+  for (const line of lines) {
+    const decl = line.match(/^(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$/i);
+    if (decl) {
+      who(decl[2].trim(), decl[3] ? decode(decl[3]) : undefined, /^actor$/i.test(decl[1]));
+      continue;
+    }
+    if (/^autonumber\b/i.test(line)) {
+      autonumber = true;
+      continue;
+    }
+    if (/^(activate|deactivate|title|links?|properties|details|create|destroy)\b/i.test(line))
+      continue;
+    const note = line.match(/^note\s+(left of|right of|over)\s+([^:]+?)\s*:\s*(.*)$/i);
+    if (note) {
+      const where = note[1].toLowerCase();
+      events.push({
+        kind: "note",
+        at: note[2].split(",").map((s) => who(s.trim())),
+        side: where.startsWith("left") ? "left" : where.startsWith("right") ? "right" : "over",
+        text: decode(note[3]),
+      });
+      continue;
+    }
+    const block = line.match(BLOCK);
+    if (block) {
+      const kind = block[1].toLowerCase();
+      open.push(kind);
+      // A rect's "label" is its colour.
+      if (kind !== "box")
+        events.push({ kind: "start", block: kind, label: kind === "rect" ? "" : decode(block[2]) });
+      continue;
+    }
+    const branch = line.match(/^(else|and|option)\b\s*(.*)$/i);
+    if (branch) {
+      events.push({ kind: "else", label: decode(branch[2]) });
+      continue;
+    }
+    if (/^end$/i.test(line)) {
+      if (!open.length) warnings.push(`An "end" with nothing to close`);
+      else if (open.pop() !== "box") events.push({ kind: "end" });
+      continue;
+    }
+    const msg = line.match(MESSAGE);
+    if (msg) {
+      const arrow = msg[2];
+      events.push({
+        kind: "message",
+        from: who(msg[1]),
+        to: who(msg[3]),
+        text: msg[4] ? decode(msg[4]) : "",
+        dashed: arrow.includes("--"),
+        head: arrow.includes(">>") || arrow.endsWith("x") || arrow.endsWith(")"),
+        both: arrow.startsWith("<<"),
+      });
+      continue;
+    }
+    warnings.push(`Skipped "${line}"`);
+  }
+  // Blocks left open close at the end.
+  for (const kind of open) if (kind !== "box") events.push({ kind: "end" });
+  return {
+    kind: "sequence",
+    participants: [...participants.values()],
+    events,
+    autonumber,
+    warnings,
+  };
 }

@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import type { JSX } from "react";
 
 import type { Editor } from "./editor-core";
+import type { Curves } from "./nodes";
 
 export type Vec = { x: number; y: number };
 export type Box = { x: number; y: number; w: number; h: number };
@@ -59,9 +60,15 @@ export type ShapeDef<P = unknown, T extends string = string> = {
   version: number;
   /**
    * Containers (frames) hold the shapes whose centre is inside them: those get the container as
-   * `parentId` and move with it. Containers draw below every other shape and don't nest.
+   * `parentId` and move with it. Containers draw below every other shape; one that fits whole
+   * inside another nests in it (and draws above it).
    */
   isContainer?: boolean;
+  /**
+   * For containers: the box (from the shape's origin, in its rotated frame) that its contents
+   * are clipped to, or null when they may spill out.
+   */
+  clipBox?: (props: P) => { w: number; h: number } | null;
   defaultProps: P;
   validate: (props: unknown) => P;
   /**
@@ -73,6 +80,22 @@ export type ShapeDef<P = unknown, T extends string = string> = {
   /** Defaults to a bounds check. Thin shapes must implement it with a screen-space tolerance. */
   hitTest?: (shape: Shape<P, T>, point: Vec, tolerance: number) => boolean;
   getHandles?: (shape: Shape<P, T>) => Handle[];
+  /**
+   * An outline whose points can be edited one by one (double-click the shape, or press Enter):
+   * its nodes and curved edges in the shape's own space (see `nodes.ts`), and the change that
+   * gives the shape new ones.
+   */
+  nodes?: {
+    /** Polygons join the last node back to the first; lines don't. */
+    closed: boolean;
+    minNodes: number;
+    read: (shape: Shape<P, T>) => { pts: number[]; curves: Curves };
+    write: (
+      shape: Shape<P, T>,
+      pts: number[],
+      curves: Curves,
+    ) => { x?: number; y?: number; rotation?: number; props: P };
+  };
   onResize?: (shape: Shape<P, T>, info: ResizeInfo) => Partial<Shape<P, T>>;
   /**
    * Resizing from a side handle changes `props.width` live instead of stretching the shape (text

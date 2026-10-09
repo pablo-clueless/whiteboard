@@ -22,7 +22,9 @@ describe("mermaidKind", () => {
     expect(mermaidKind(FLOW)).toBe("flowchart");
     expect(mermaidKind("graph TD\nA-->B")).toBe("flowchart");
     expect(mermaidKind("erDiagram\n A ||--o{ B : x")).toBe("er");
-    expect(mermaidKind("sequenceDiagram\n A->>B: hi")).toBe("other");
+    expect(mermaidKind("sequenceDiagram\n A->>B: hi")).toBe("sequence");
+    expect(mermaidKind("classDiagram\n A <|-- B")).toBe("class");
+    expect(mermaidKind("stateDiagram-v2\n [*] --> A")).toBe("other");
     expect(mermaidKind("just some notes")).toBeNull();
   });
 });

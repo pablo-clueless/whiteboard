@@ -71,6 +71,8 @@ const EDIT: Row[] = [
     ],
   },
   { label: "Edit inside a group", keys: [["Double-click"]] },
+  { label: "Edit a line's or polygon's points", keys: [["Enter"], ["Double-click"]] },
+  { label: "Remove the picked point", keys: [["Delete"]] },
   { label: "Select all", keys: [[MOD, "A"]] },
   { label: "Delete", keys: [["Delete"], ["Backspace"]] },
   { label: "Nudge (10 with Shift)", keys: [["←"], ["↑"], ["→"], ["↓"]] },
