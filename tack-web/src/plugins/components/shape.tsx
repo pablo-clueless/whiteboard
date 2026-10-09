@@ -46,8 +46,9 @@ export function cardLook(p: ComponentProps) {
     // Brand logos keep their own colour; line icons and monograms take the provider's.
     iconColor: found?.item.icon.kind === "brand" ? found.item.icon.hex : accent,
     accent,
+    // Borders use the colour exactly as given, at full strength.
+    border: color,
     fill: tint(accent, 0.93),
-    tileStroke: tint(accent, 0.7),
     // A card from this board's components that has since been deleted is just a "Component".
     caption: found
       ? (found.item.caption ?? found.provider.label)
@@ -157,8 +158,8 @@ export const componentShape: ShapeDef<ComponentProps, "component"> = {
     const anchor = lb.align === "center" ? "middle" : "start";
     const lx = lb.align === "center" ? lb.x + lb.w / 2 : lb.x;
     return (
-      `<rect width="${n(p.w)}" height="${n(p.h)}" rx="10" fill="${look.fill}" stroke="${look.accent}" stroke-width="1.5"/>` +
-      `<rect x="${n(l.tile.x)}" y="${n(l.tile.y)}" width="${n(l.tile.size)}" height="${n(l.tile.size)}" rx="8" fill="#ffffff" stroke="${look.tileStroke}"/>` +
+      `<rect width="${n(p.w)}" height="${n(p.h)}" rx="10" fill="${look.fill}" stroke="${esc(look.border)}" stroke-width="1.5"/>` +
+      `<rect x="${n(l.tile.x)}" y="${n(l.tile.y)}" width="${n(l.tile.size)}" height="${n(l.tile.size)}" rx="8" fill="#ffffff" stroke="${esc(look.border)}"/>` +
       iconSvg(look.icon, look.iconColor, l.icon.x, l.icon.y, l.icon.size) +
       `<text x="${n(lx)}" y="${n(lb.y + lb.h / 2)}" text-anchor="${anchor}" dominant-baseline="central" font-family="${esc(textFont())}" font-weight="600" font-size="${lb.fontSize}" fill="${INK}">${esc(p.label)}</text>` +
       (l.caption
@@ -182,7 +183,7 @@ export const componentShape: ShapeDef<ComponentProps, "component"> = {
           height={p.h}
           cornerRadius={p.variant === "icon" ? 14 : 10}
           fill={look.fill}
-          stroke={look.accent}
+          stroke={look.border}
           strokeWidth={isSelected ? 2 : 1.5}
           perfectDrawEnabled={false}
         />
@@ -193,7 +194,7 @@ export const componentShape: ShapeDef<ComponentProps, "component"> = {
           height={l.tile.size}
           cornerRadius={8}
           fill="#ffffff"
-          stroke={look.tileStroke}
+          stroke={look.border}
           strokeWidth={1}
           listening={false}
           perfectDrawEnabled={false}
