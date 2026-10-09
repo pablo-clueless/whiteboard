@@ -8,8 +8,6 @@ import {
   Spline,
   RotateCcw,
   RotateCw,
-  ArrowLeft,
-  ArrowRight,
   ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
@@ -34,6 +32,7 @@ import { HEADER_COLORS, setTableFields } from "./shapes/table-fields";
 import { fieldsToText, textToFields } from "./shapes/table-text";
 import type { TableField, TableProps } from "./shapes/table";
 import { Slider as UiSlider } from "@/components/ui/slider";
+import { ARROW_HEADS, type ArrowHead } from "./shapes/line";
 import { ARRANGE_ICONS, runArrange } from "./ArrangeMenu";
 import { shapeRegistry } from "./shapes/registry";
 import { useEditorStore } from "@/stores/editor";
@@ -126,6 +125,44 @@ const LAYER_ACTIONS: { move: ZOrderMove; label: string; icon: typeof ArrowUp }[]
 ];
 
 type Editable = Partial<StyleProps & ShapeKnobs>;
+
+const HEAD_LABELS: Record<ArrowHead | "none", string> = {
+  none: "No head",
+  arrow: "Arrow",
+  triangle: "Hollow triangle (inherits)",
+  diamond: "Hollow diamond (aggregation)",
+  diamondFilled: "Filled diamond (composition)",
+};
+
+/** A short line ending in an arrowhead of each kind, pointing right (or left, flipped). */
+function HeadIcon({ kind, flip }: { kind: ArrowHead | null; flip: boolean }) {
+  const head =
+    kind === "arrow" ? (
+      <path d="M17 10 11 6.5v7z" fill="currentColor" />
+    ) : kind === "triangle" ? (
+      <path d="M18 10 11 6v8z" fill="#fff" stroke="currentColor" strokeWidth={1.4} />
+    ) : kind === "diamond" || kind === "diamondFilled" ? (
+      <path
+        d="M18 10 14 7 10 10 14 13z"
+        fill={kind === "diamond" ? "#fff" : "currentColor"}
+        stroke="currentColor"
+        strokeWidth={1.4}
+        strokeLinejoin="round"
+      />
+    ) : null;
+  const lineEnd = kind === "arrow" ? 12 : kind ? (kind === "triangle" ? 11 : 10) : 18;
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className="size-4"
+      aria-hidden
+      style={flip ? { transform: "scaleX(-1)" } : undefined}
+    >
+      <path d={`M2 10H${lineEnd}`} stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
+      {head}
+    </svg>
+  );
+}
 
 /* ── Colour parsing ─────────────────────────────────────────────────────── */
 
@@ -512,6 +549,88 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+/**
+ * Point editing for one line, arrow or polygon: start and finish it, and make the picked edge
+ * (or every edge) straight or curved.
+ */
+function PointsSection({
+  editor,
+  id,
+  editing,
+}: {
+  editor: Editor;
+  id: string;
+  editing: { id: string; node: number | null; edge: number | null } | null;
+}) {
+  const on = editing?.id === id;
+  const outline = editor.readNodes(id);
+  if (!outline) return null;
+  const edge = on ? editing.edge : null;
+  const curved = edge !== null ? !!outline.curves[edge] : outline.curves.some(Boolean);
+  const allCurved = outline.curves.length > 0 && outline.curves.every(Boolean);
+  const pill =
+    "focus-visible:ring-primary/40 text-ink h-7 rounded-lg text-xs font-semibold outline-none focus-visible:ring-3";
+  return (
+    <Section title={edge !== null ? "Points · picked edge" : "Points"}>
+      <div className="space-y-1.5">
+        <button
+          type="button"
+          onClick={() => editor.ui.setEditingNodes(on ? null : { id, node: null, edge: null })}
+          title={
+            on ? "Finish editing points (Enter or Esc)" : "Move, add and remove points (Enter)"
+          }
+          className={cn(
+            pill,
+            "flex w-full items-center justify-center gap-1.5 border",
+            on ? "bg-primary border-primary text-white" : "bg-white hover:bg-[#f8f8f9]",
+          )}
+        >
+          <Spline className="size-3.5" />
+          {on ? "Done editing points" : "Edit points"}
+        </button>
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+          {(
+            [
+              [false, "Straight"],
+              [true, "Curved"],
+            ] as const
+          ).map(([value, label]) => {
+            const pressed = edge !== null ? curved === value : value ? allCurved : !curved;
+            return (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={pressed}
+                title={
+                  edge !== null
+                    ? `Make the picked edge ${label.toLowerCase()}`
+                    : `Make every edge ${label.toLowerCase()}${value ? " (a smooth curve through the points)" : ""}`
+                }
+                onClick={() => editor.setEdgesCurved(id, value, edge !== null ? [edge] : undefined)}
+                className={cn(
+                  pill,
+                  pressed ? "bg-white shadow-sm" : "text-ink/50 hover:bg-white/60",
+                )}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {on && (
+          <p className="text-ink/50 text-[11px] leading-snug">
+            {editing.node !== null
+              ? "Drag to move the point; Delete removes it."
+              : edge !== null
+                ? "Straight or Curved applies to this edge. Drag its dot to add a point."
+                : "Drag a point to move it, or an edge's dot to add one. Click a dot to pick that edge."}
+          </p>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 /* ── Panel ──────────────────────────────────────────────────────────────── */
 
 /**
@@ -520,6 +639,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  */
 export function StylePanel({ editor }: { editor: Editor }) {
   const selectedIds = useEditorStore((s) => s.selectedIds);
+  const editingNodes = useEditorStore((s) => s.editingNodes);
   const first = useShape(editor, selectedIds[0] ?? "");
   if (!selectedIds.length || !first) return null;
 
@@ -744,6 +864,32 @@ export function StylePanel({ editor }: { editor: Editor }) {
                 className={cn(
                   "focus-visible:ring-primary/40 text-ink h-7 rounded-lg text-xs font-semibold outline-none focus-visible:ring-3",
                   props.markdown === value ? "bg-white shadow-sm" : "text-ink/50 hover:bg-white/60",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+      {has("clip") && (
+        <Section title="Contents">
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+            {(
+              [
+                [true, "Clip", "Hide whatever spills over the frame's edges"],
+                [false, "Show all", "Let what's inside spill over the edges"],
+              ] as const
+            ).map(([value, label, title]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={props.clip === value}
+                title={title}
+                onClick={() => set({ clip: value })}
+                className={cn(
+                  "focus-visible:ring-primary/40 text-ink h-7 rounded-lg text-xs font-semibold outline-none focus-visible:ring-3",
+                  props.clip === value ? "bg-white shadow-sm" : "text-ink/50 hover:bg-white/60",
                 )}
               >
                 {label}
@@ -1002,29 +1148,47 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
+      {selectedIds.length === 1 && editor.canEditNodes(selectedIds[0]) && (
+        <PointsSection editor={editor} id={selectedIds[0]} editing={editingNodes} />
+      )}
       {has("arrowStart") && (
         <Section title="Arrowheads">
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+          <div className="space-y-1.5">
             {(
               [
-                ["arrowStart", "Start", ArrowLeft],
-                ["arrowEnd", "End", ArrowRight],
+                ["arrowStart", "startHead", "Start"],
+                ["arrowEnd", "endHead", "End"],
               ] as const
-            ).map(([key, label, Icon]) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={!!props[key]}
-                onClick={() => set({ [key]: !props[key] })}
-                className={cn(
-                  "focus-visible:ring-primary/40 text-ink flex h-7 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold outline-none focus-visible:ring-3",
-                  props[key] ? "bg-white shadow-sm" : "text-ink/50 hover:bg-white/60",
-                )}
-              >
-                <Icon className="size-3.5" />
-                {label}
-              </button>
-            ))}
+            ).map(([on, kindKey, end]) => {
+              const current = props[on] ? (props[kindKey] ?? "arrow") : null;
+              return (
+                <div key={on} className="flex items-center gap-2">
+                  <span className="text-ink/55 w-8 text-[11px] font-semibold">{end}</span>
+                  <div className="grid flex-1 grid-cols-5 gap-0.5 rounded-xl bg-[#f3f3f5] p-1">
+                    {([null, ...ARROW_HEADS] as const).map((kind) => (
+                      <button
+                        key={kind ?? "none"}
+                        type="button"
+                        title={`${end}: ${HEAD_LABELS[kind ?? "none"]}`}
+                        aria-label={`${end}: ${HEAD_LABELS[kind ?? "none"]}`}
+                        aria-pressed={current === kind}
+                        onClick={() =>
+                          set(kind ? { [on]: true, [kindKey]: kind } : { [on]: false })
+                        }
+                        className={cn(
+                          "focus-visible:ring-primary/40 grid h-7 place-items-center rounded-lg outline-none focus-visible:ring-3",
+                          current === kind
+                            ? "text-ink bg-white shadow-sm"
+                            : "text-ink/50 hover:bg-white/60",
+                        )}
+                      >
+                        <HeadIcon kind={kind} flip={on === "arrowStart"} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </Section>
       )}

@@ -17,13 +17,18 @@ function download(blob: Blob, name: string) {
 
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
 
+export type ExportFormat = "png" | "svg" | "pdf";
+export const EXPORT_FORMATS: ExportFormat[] = ["png", "svg", "pdf"];
+
 /** Exports the board, or the selection, and downloads it. Problems are shown as notices. */
-export async function exportToFile(editor: Editor, selectionOnly: boolean, format: "png" | "svg") {
+export async function exportToFile(editor: Editor, selectionOnly: boolean, format: ExportFormat) {
   try {
     const ids = selectionOnly ? editor.ui.selectedIds : undefined;
     let blob: Blob | null = null;
     if (format === "png") {
       blob = await editor.exportPng(ids);
+    } else if (format === "pdf") {
+      blob = await editor.exportPdf(ids, selectionOnly ? "Tack selection" : "Tack board");
     } else {
       const result = await editor.exportSvg(ids);
       blob = result?.blob ?? null;
@@ -43,7 +48,7 @@ export async function exportToFile(editor: Editor, selectionOnly: boolean, forma
   }
 }
 
-/** Exports the board, or just the selection, as a PNG at 2× resolution or as an SVG. */
+/** Exports the board, or just the selection, as a PNG at 2× resolution, an SVG or a PDF. */
 export function ExportMenu({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,7 +75,7 @@ export function ExportMenu({ editor }: { editor: Editor }) {
     };
   }, [open]);
 
-  const run = async (selectionOnly: boolean, format: "png" | "svg") => {
+  const run = async (selectionOnly: boolean, format: ExportFormat) => {
     setOpen(false);
     setBusy(true);
     try {
@@ -102,7 +107,7 @@ export function ExportMenu({ editor }: { editor: Editor }) {
           aria-label="Export"
           className="absolute top-full right-0 mt-2 w-56 rounded-2xl border bg-white p-1.5 shadow-[0_12px_30px_-12px_rgb(14_14_16/0.35)]"
         >
-          {(["png", "svg"] as const).map((format) => (
+          {EXPORT_FORMATS.map((format) => (
             <Fragment key={format}>
               <button
                 type="button"

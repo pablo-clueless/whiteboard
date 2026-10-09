@@ -8,6 +8,7 @@ import Konva from "konva";
 
 import { pageToScreen, screenToPage, useEditorStore, zoomAt } from "@/stores/editor";
 import { useFrozenShape, useShape, useVisibleShapeIds } from "./sync/useShapes";
+import { NodeHandles, showsNodesWhenSelected } from "./NodeHandles";
 import type { Box, Shape, Tool, ToolEvent, Vec } from "./types";
 import { SNAP_DISTANCE, snapPoint } from "./snapping";
 import { type Terminal, toPage } from "./bindings";
@@ -103,6 +104,7 @@ export function Canvas({ editor, awareness }: { editor: Editor; awareness: Aware
           <Layer name="overlay">
             <SelectionHandles editor={editor} width={size.width} height={size.height} />
             <EndpointHandles editor={editor} />
+            <NodeHandles editor={editor} />
             <Brush />
             <Guides />
             <EditingGroupOutline editor={editor} />
@@ -232,6 +234,10 @@ function useCanvasInput(editor: Editor, toolId: string) {
         editor.startGesture(); // the label editor ends it
         editor.select([id]);
         editor.ui.setEditingLabel(id);
+      } else if (editor.canEditNodes(id)) {
+        // Lines, polygons and stars: edit their points.
+        editor.select([id]);
+        editor.ui.setEditingNodes({ id, node: null, edge: null });
       }
     },
     onContextMenu(e: KonvaEventObject<PointerEvent>) {
@@ -308,6 +314,25 @@ function useCanvasInput(editor: Editor, toolId: string) {
         // Duplicate, rather than the browser's bookmark shortcut.
         e.preventDefault();
         if (selectedIds.length) editor.duplicate(selectedIds);
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        editor.ui.editingNodes?.node != null
+      ) {
+        // In point editing, Delete removes the picked point rather than the shape.
+        e.preventDefault();
+        const { id, node } = editor.ui.editingNodes;
+        if (editor.deleteNode(id, node)) editor.ui.setEditingNodes({ id, node: null, edge: null });
+      } else if (e.key === "Enter" && !mod && selectedIds.length === 1) {
+        // Enter starts editing a line's, arrow's or polygon's points; Enter again finishes.
+        const [id] = selectedIds;
+        if (editor.ui.editingNodes) editor.ui.setEditingNodes(null);
+        else if (editor.canEditNodes(id)) {
+          e.preventDefault();
+          editor.ui.setEditingNodes({ id, node: null, edge: null });
+        }
+      } else if (e.key === "Escape" && editor.ui.editingNodes) {
+        // Leaves point editing, keeping the shape selected.
+        editor.ui.setEditingNodes(null);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (!selectedIds.length) return;
         e.preventDefault();
@@ -389,6 +414,7 @@ const ShapeView = memo(function ShapeView({ editor, id }: { editor: Editor; id: 
   const shape = frozen ?? live;
   const isSelected = useEditorStore((s) => s.selectedIds.includes(id));
   const erasing = useEditorStore((s) => s.erasingIds.includes(id));
+  const exporting = useEditorStore((s) => !!s.exporting);
   if (!shape) return null;
 
   const def = shapeRegistry.get(shape.type);
@@ -401,17 +427,23 @@ const ShapeView = memo(function ShapeView({ editor, id }: { editor: Editor; id: 
     return null;
   }
 
+  // Inside a frame, cut off at its edges, except while selected, so you can see all of what
+  // you're moving or editing (and drag it out). The wrapper is always there, so selecting doesn't
+  // remount the node the transform handles hold.
+  const clipped = !!shape.parentId && (!isSelected || exporting);
   return (
-    <Group
-      id={id}
-      name="shape"
-      x={shape.x}
-      y={shape.y}
-      rotation={shape.rotation}
-      // The eraser fades what it's about to remove, on top of the shape's own opacity.
-      opacity={(shape.opacity ?? 1) * (erasing ? 0.25 : 1)}
-    >
-      <def.Component shape={{ ...shape, props }} isSelected={isSelected} />
+    <Group clipFunc={clipped ? (ctx) => editor.traceClip(id, ctx) : undefined}>
+      <Group
+        id={id}
+        name="shape"
+        x={shape.x}
+        y={shape.y}
+        rotation={shape.rotation}
+        // The eraser fades what it's about to remove, on top of the shape's own opacity.
+        opacity={(shape.opacity ?? 1) * (erasing ? 0.25 : 1)}
+      >
+        <def.Component shape={{ ...shape, props }} isSelected={isSelected} />
+      </Group>
     </Group>
   );
 });
@@ -431,6 +463,7 @@ function SelectionHandles({
 }) {
   const trRef = useRef<Konva.Transformer>(null);
   const selectedIds = useEditorStore((s) => s.selectedIds);
+  const editingNodesId = useEditorStore((s) => s.editingNodes?.id ?? null);
   const ids = useVisibleShapeIds(editor, width, height);
 
   const anyLocked = selectedIds.some((id) => editor.getShape(id)?.locked);
@@ -443,14 +476,15 @@ function SelectionHandles({
   useEffect(() => {
     const tr = trRef.current;
     if (!tr) return;
-    // Lines and arrows are edited by their endpoint handles, not the resize box.
+    // Lines and arrows are edited by their endpoint handles, not the resize box; nor is a
+    // shape whose points are being edited.
     const nodes = selectedIds
-      .filter((id) => !hasEndpointHandles(editor, id))
+      .filter((id) => !hasEndpointHandles(editor, id) && id !== editingNodesId)
       .map((id) => editor.nodeFor(id))
       .filter((n): n is Konva.Node => !!n);
     tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
-  }, [editor, selectedIds, ids]);
+  }, [editor, selectedIds, ids, editingNodesId]);
 
   // Shapes resize from props (local or remote), which Konva doesn't notice on its own.
   useEffect(() => {
@@ -619,7 +653,10 @@ function EndpointHandles({ editor }: { editor: Editor }) {
   const selectedIds = useEditorStore((s) => s.selectedIds);
   const zoom = useEditorStore((s) => s.camera.zoom);
   const shape = useShape(editor, selectedIds.length === 1 ? selectedIds[0] : "");
+  const editingNodes = useEditorStore((s) => s.editingNodes?.id === shape?.id);
   if (!shape || editor.readOnly || shape.locked) return null;
+  // Point handles take over for shapes whose points matter (see `NodeHandles`).
+  if (editingNodes || showsNodesWhenSelected(editor, shape.id)) return null;
   const def = shapeRegistry.get(shape.type);
   if (!def?.getHandles) return null;
   let valid: Shape;

@@ -6,7 +6,7 @@ import { useRef } from "react";
 const LETTERS = "tack".split("");
 const TILTS = [-8, 6, -4, 10];
 
-const letterVariants: Variants = {
+const varinats: Variants = {
   hidden: (i: number) => ({ y: "-160%", rotate: TILTS[i] * 2, opacity: 0 }),
   visible: (i: number) => ({
     y: 0,
@@ -22,10 +22,10 @@ const letterVariants: Variants = {
 };
 
 export function Footer() {
-  const footerRef = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLElement>(null);
 
   return (
-    <footer className="bg-primary mt-8 overflow-hidden px-3 sm:px-6" ref={footerRef}>
+    <footer className="bg-primary mt-8 overflow-hidden px-3 sm:px-6" ref={ref}>
       <div className="container mx-auto">
         <motion.div
           aria-hidden
@@ -36,21 +36,21 @@ export function Footer() {
         >
           {LETTERS.map((letter, i) => (
             <motion.p
-              className="text-ink cursor-grab text-[clamp(9rem,36vw,62rem)] leading-[0.72] font-black tracking-[-0.075em] active:cursor-grabbing"
+              className="text-ink cursor-grab text-[clamp(9rem,36vw,70rem)] leading-[0.72] font-black tracking-[-0.075em] active:cursor-grabbing"
               custom={i}
               drag
-              dragConstraints={footerRef}
+              dragConstraints={ref}
               dragElastic={0.2}
               dragTransition={{ bounceStiffness: 300, bounceDamping: 18 }}
               key={letter}
-              variants={letterVariants}
+              variants={varinats}
               whileDrag={{ scale: 1.06, rotate: TILTS[i], zIndex: 10 }}
             >
               {letter}
             </motion.p>
           ))}
         </motion.div>
-        <div className="flex items-center justify-between py-2 text-sm">
+        <div className="flex flex-col items-center justify-between py-2 text-sm sm:flex-row sm:items-center sm:text-center">
           <p>&copy;{new Date().getFullYear()} Tack. All rights reserved.</p>
           <p>Tack is a free, open-source whiteboard tool.</p>
         </div>
