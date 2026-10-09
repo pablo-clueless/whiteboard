@@ -381,11 +381,11 @@ function CardPreview({
     <div className="bg-dots grid h-40 place-items-center rounded-xl border bg-[#fafafa] p-3">
       <div
         className="flex h-15 w-full max-w-50 items-center gap-2.5 rounded-[10px] border-[1.5px] px-2.5"
-        style={{ background: tint(accent, 0.93), borderColor: accent }}
+        style={{ background: tint(accent, 0.93), borderColor: color }}
       >
         <span
           className="grid size-10 shrink-0 place-items-center rounded-lg border bg-white"
-          style={{ borderColor: tint(accent, 0.7) }}
+          style={{ borderColor: color }}
         >
           <IconSvg icon={icon} color={icon.kind === "brand" ? icon.hex : accent} size={24} />
         </span>
