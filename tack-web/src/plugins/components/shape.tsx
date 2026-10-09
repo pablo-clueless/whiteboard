@@ -1,12 +1,14 @@
 import { Group, Rect, Text } from "react-konva";
+import { useSyncExternalStore } from "react";
 import { Box } from "lucide";
 
 import { glyph, iconSvg, type IconSpec, KonvaIcon, readable, tint } from "@/editor/icons";
 import { componentCatalog, itemColor } from "@/editor/component-catalog";
 import { boxBounds, boxResize, num, str } from "@/editor/shapes/box";
-import { textFont } from "@/editor/shapes/text";
 import type { LabelBox, ShapeDef } from "@/editor/types";
+import { BOARD_PROVIDER } from "@/editor/library";
 import { useEditorStore } from "@/stores/editor";
+import { textFont } from "@/editor/shapes/text";
 import { esc, n } from "@/editor/svg";
 
 /**
@@ -46,7 +48,10 @@ export function cardLook(p: ComponentProps) {
     accent,
     fill: tint(accent, 0.93),
     tileStroke: tint(accent, 0.7),
-    caption: found ? found.provider.label : p.provider || "Component",
+    // A card from this board's components that has since been deleted is just a "Component".
+    caption: found
+      ? (found.item.caption ?? found.provider.label)
+      : (p.provider !== BOARD_PROVIDER && p.provider) || "Component",
   };
 }
 
@@ -164,6 +169,9 @@ export const componentShape: ShapeDef<ComponentProps, "component"> = {
   Component: function ComponentCard({ shape, isSelected }) {
     // While the name is being edited in place, the editor draws it instead.
     const editing = useEditorStore((s) => s.editingLabelId === shape.id);
+    // Redraw when the catalog changes: a component made on this board can be edited or arrive
+    // after the card that uses it.
+    useSyncExternalStore(componentCatalog.subscribe, componentCatalog.all, componentCatalog.all);
     const p = shape.props;
     const look = cardLook(p);
     const l = layout(p);

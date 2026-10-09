@@ -213,7 +213,7 @@ function useCanvasInput(editor: Editor, toolId: string) {
       if (!gesture.current) currentTool().onHover?.(null, editor);
     },
     onDblClick(e: KonvaEventObject<MouseEvent>) {
-      // Double-click text to edit it, or a named shape (a card, a frame) to rename it.
+      // Double-click text or a note to edit it, or a named shape (a card, a frame) to rename it.
       if (editor.readOnly) return;
       const id = e.target.findAncestor(".shape", true)?.id();
       const shape = id ? editor.getShape(id) : null;
@@ -226,7 +226,7 @@ function useCanvasInput(editor: Editor, toolId: string) {
         return;
       }
       if (shape.locked) return;
-      if (shape.type === "text") {
+      if (shape.type === "text" || shape.type === "sticky") {
         editor.startGesture(); // the text editor ends it
         editor.select([id]);
         editor.ui.setEditingText(id);

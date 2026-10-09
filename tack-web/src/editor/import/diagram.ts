@@ -342,7 +342,7 @@ function buildFlowchart(b: Builder, chart: Flowchart) {
         : (["left", "right"] as const);
     b.connect(from, fromSide, to, toSide, {
       label: e.label ?? "",
-      dashed: e.dashed,
+      strokeStyle: e.dashed ? "dashed" : "solid",
       strokeWidth: e.thick ? 3 : 1.5,
       stroke: INK,
       arrowStart: e.arrowStart,
@@ -451,7 +451,7 @@ function buildClassDiagram(b: Builder, d: ClassDiagram) {
     b.connectAt(from, anchors[0], to, anchors[1], {
       stroke: INK,
       strokeWidth: 1.5,
-      dashed: r.dashed,
+      strokeStyle: r.dashed ? "dashed" : "solid",
       arrowStart: !!r.fromHead,
       startHead: r.fromHead ?? "arrow",
       arrowEnd: !!r.toHead,
@@ -495,7 +495,7 @@ function buildSequence(b: Builder, d: SequenceDiagram) {
         block.x,
         div.y,
         [0, 0, block.w, 0],
-        { ...noHeads, dashed: true, stroke: BLOCK_EDGE, strokeWidth: 1 },
+        { ...noHeads, strokeStyle: "dashed", stroke: BLOCK_EDGE, strokeWidth: 1 },
         group,
       );
       if (div.label)
@@ -511,7 +511,7 @@ function buildSequence(b: Builder, d: SequenceDiagram) {
   for (const line of layout.lifelines)
     b.path(line.x, line.y1, [0, 0, 0, line.y2 - line.y1], {
       ...noHeads,
-      dashed: true,
+      strokeStyle: "dashed",
       stroke: LIFELINE,
       strokeWidth: 1,
     });
@@ -543,7 +543,7 @@ function buildSequence(b: Builder, d: SequenceDiagram) {
       {
         arrowStart: m.both,
         arrowEnd: m.head,
-        dashed: m.dashed,
+        strokeStyle: m.dashed ? "dashed" : "solid",
         stroke: INK,
         strokeWidth: 1.5,
       },

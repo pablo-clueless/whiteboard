@@ -158,6 +158,8 @@ export type Tool = {
    * used. Ungrouped tools get their own button.
    */
   group?: string;
+  /** False keeps the tool out of the main toolbar, for one with a button elsewhere. */
+  toolbar?: false;
   cursor: string;
   onPointerDown?: (e: ToolEvent, editor: Editor) => void;
   onPointerMove?: (e: ToolEvent, editor: Editor) => void;

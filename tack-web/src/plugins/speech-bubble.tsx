@@ -3,6 +3,7 @@ import { Path } from "react-konva";
 import { boxBounds, boxResize, DEFAULT_BOX, validateBox, type BoxProps } from "@/editor/shapes/box";
 import type { ShapeDef } from "@/editor/types";
 import { esc, paint } from "@/editor/svg";
+import { konvaDash } from "@/editor/stroke";
 
 /**
  * A speech bubble: a rounded box with a tail at the bottom left. The tail is inside the w×h box,
@@ -40,7 +41,7 @@ export const speechBubbleShape: ShapeDef<SpeechBubbleProps, "speech-bubble"> = {
   getBounds: boxBounds,
   onResize: boxResize,
   toSvg: ({ props: p }) =>
-    `<path d="${esc(bubblePath(p.w, p.h))}" ${paint(p.fill, p.stroke, p.strokeWidth)}/>`,
+    `<path d="${esc(bubblePath(p.w, p.h))}" ${paint(p.fill, p.stroke, p.strokeWidth, p.strokeStyle)}/>`,
   Component: ({ shape }) => {
     const p = shape.props;
     return (
@@ -49,6 +50,7 @@ export const speechBubbleShape: ShapeDef<SpeechBubbleProps, "speech-bubble"> = {
         fill={p.fill}
         stroke={p.stroke}
         strokeWidth={p.strokeWidth}
+        {...konvaDash(p.strokeStyle, p.strokeWidth)}
         lineJoin="round"
         perfectDrawEnabled={false}
       />

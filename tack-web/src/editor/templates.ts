@@ -21,8 +21,6 @@ export type Template = {
 type Side = "top" | "right" | "bottom" | "left";
 const PORT: Record<Side, number> = { top: 0, right: 1, bottom: 2, left: 3 };
 
-const STICKY = { fill: "#fff3b0", stroke: "#f0dc7a", strokeWidth: 1, radius: 8 };
-
 /** Small helpers templates build with. Coordinates are relative to the template's origin. */
 export class Builder {
   constructor(
@@ -81,19 +79,15 @@ export class Builder {
     return id;
   }
 
-  sticky(x: number, y: number, label: string, fill = STICKY.fill) {
-    // Yellow notes get a matching edge; other colours a neutral one.
-    const stroke = fill === STICKY.fill ? STICKY.stroke : "#d4d4da";
-    return this.labelled(
-      "rect",
-      x,
-      y,
-      240,
-      72,
-      label,
-      { ...STICKY, fill, stroke },
-      { fontSize: 15 },
-    );
+  /** A wide sticky note, card-sized for columns. */
+  sticky(x: number, y: number, label: string, fill?: string) {
+    return this.shape("sticky", x, y, {
+      text: label,
+      w: 240,
+      h: 72,
+      fontSize: 15,
+      ...(fill ? { fill } : {}),
+    });
   }
 
   component(provider: string, item: string, label: string, x: number, y: number) {

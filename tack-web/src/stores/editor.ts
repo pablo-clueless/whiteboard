@@ -39,6 +39,7 @@ type EditorState = {
   boardFull: boolean;
   /** The "diagram from code" dialog. */
   importOpen: boolean;
+  libraryDialog: LibraryDialog | null;
   setTool: (toolId: string) => void;
   setSelection: (ids: string[]) => void;
   setHovered: (id: string | null) => void;
@@ -58,9 +59,13 @@ type EditorState = {
   setShortcutsOpen: (open: boolean) => void;
   setImportOpen: (open: boolean) => void;
   setBoardFull: (full: boolean) => void;
+  setLibraryDialog: (dialog: LibraryDialog | null) => void;
 };
 
 export type ConnectHint = { shapeId: string; port: number | null };
+
+/** Making or editing a card for this board's components, or saving shapes as one. */
+export type LibraryDialog = { kind: "card"; id: string | null } | { kind: "save"; ids: string[] };
 
 export const useEditorStore = create<EditorState>()((set) => ({
   toolId: "select",
@@ -80,6 +85,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
   shortcutsOpen: false,
   boardFull: false,
   importOpen: false,
+  libraryDialog: null,
   setTool: (toolId) => set({ toolId }),
   // Point editing is for one selected shape: selecting anything else ends it.
   setSelection: (selectedIds) =>
@@ -103,6 +109,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   setImportOpen: (importOpen) => set({ importOpen }),
   setBoardFull: (boardFull) => set({ boardFull }),
+  setLibraryDialog: (libraryDialog) => set({ libraryDialog }),
   setConnect: (connect) =>
     set((s) =>
       s.connect?.shapeId === connect?.shapeId && s.connect?.port === connect?.port

@@ -10,9 +10,10 @@ import { type ArrowHead, arrowHeadSize } from "./shapes/line";
 import { orthogonalRoute, type RouteEnd } from "./routing";
 import { MIN_ZOOM, useEditorStore } from "@/stores/editor";
 import { shapeRegistry } from "./shapes/registry";
+import { whenImagesLoaded } from "./shapes/image";
 import type { BoardDoc } from "./sync/board-doc";
-import { whenImageLoaded } from "./shapes/image";
 import type { Box, Shape, Vec } from "./types";
+import type { StrokeStyle } from "./stroke";
 import { onFontsLoaded } from "./fonts";
 import { unionBox } from "./geometry";
 import {
@@ -40,7 +41,7 @@ import {
 /** Transaction origin for this client's own edits. The undo manager tracks only these. */
 export const LOCAL_ORIGIN = "local";
 
-const VIEWER_TOOLS = ["select", "hand"];
+const VIEWER_TOOLS = ["select", "hand", "zoom"];
 
 /** Inserted images are scaled down to at most this many screen pixels on their longer side. */
 const IMAGE_MAX_SCREEN = 480;
@@ -57,7 +58,7 @@ const nextFrames = (n: number) =>
   });
 
 /** Marks clipboard text as Tack shapes, so pasting other text never creates junk. */
-const CLIPBOARD_PREFIX = "tack/shapes:";
+export const CLIPBOARD_PREFIX = "tack/shapes:";
 /** How far pasted and duplicated shapes land from the originals, in page units. */
 export const PASTE_NUDGE = 16;
 
@@ -1295,6 +1296,28 @@ export class Editor {
     return ids;
   }
 
+  /**
+   * Uploads an image for use inside a shape (a custom component's icon) and returns its asset
+   * id, or null with a notice if it isn't an image we take or the upload fails.
+   */
+  async uploadImage(file: File): Promise<string | null> {
+    if (this.readOnly || !this.uploadAsset) return null;
+    if (!IMAGE_TYPES.includes(file.type)) {
+      this.notify(`${file.name || "That file"} isn't a PNG, JPEG, WebP or GIF image.`, "error");
+      return null;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      this.notify(`${file.name || "That image"} is over 5 MB.`, "error");
+      return null;
+    }
+    try {
+      return (await this.uploadAsset(file)).assetId;
+    } catch {
+      this.notify(`Couldn't upload ${file.name || "the image"}. Try again.`, "error");
+      return null;
+    }
+  }
+
   /* ── Export ───────────────────────────────────────────────────────────── */
 
   /**
@@ -1351,12 +1374,8 @@ export class Editor {
     try {
       // Let React mount every exported shape, and let any images finish loading.
       await nextFrames(2);
-      await Promise.all(
-        ids
-          .map((id) => this.getShape(id))
-          .filter((s) => s?.type === "image")
-          .map((s) => whenImageLoaded((s!.props as { assetId: string }).assetId)),
-      );
+      // Mounting them started loading any images they use (pictures, uploaded icons).
+      await whenImagesLoaded();
       await nextFrames(1);
       const layer = this.stage.findOne<Konva.Layer>(".shapes");
       if (!layer) return null;
@@ -1402,7 +1421,6 @@ export class Editor {
     const { ids, box } = target;
     const pad = EXPORT_PADDING;
     let skipped = 0;
-    const assets = new Set<string>();
     const parts: string[] = [];
     const clips: string[] = [];
     for (const id of ids) {
@@ -1412,7 +1430,6 @@ export class Editor {
         skipped++;
         continue;
       }
-      if (shape.type === "image") assets.add((shape.props as { assetId: string }).assetId);
       const transform = `translate(${shape.x} ${shape.y})${shape.rotation ? ` rotate(${shape.rotation})` : ""}`;
       const opacity =
         shape.opacity !== undefined && shape.opacity < 1 ? ` opacity="${shape.opacity}"` : "";
@@ -1428,10 +1445,14 @@ export class Editor {
       parts.push(part);
     }
     let body = (clips.length ? `<defs>${clips.join("")}</defs>\n` : "") + parts.join("\n");
-    // Swap each image URL for its bytes.
+    // Swap each board image's URL for its bytes: pictures, and images inside shapes (icons).
+    const prefix = `href="${assetUrl("")}`;
+    const urls = new Set<string>();
+    for (let at = body.indexOf(prefix); at !== -1; at = body.indexOf(prefix, at + 1)) {
+      urls.add(body.slice(at + 6, body.indexOf('"', at + 6)));
+    }
     await Promise.all(
-      [...assets].map(async (assetId) => {
-        const url = assetUrl(assetId);
+      [...urls].map(async (url) => {
         try {
           const blob = await (await fetch(url)).blob();
           const data = await new Promise<string>((resolve, reject) => {
@@ -1866,6 +1887,7 @@ export type ShapeKnobs = {
   route: "elbow" | "straight";
   /** A frame hides what spills over its edges. */
   clip: boolean;
+  strokeStyle: StrokeStyle;
 };
 
 /** Any angle as its equivalent in (-180, 180], so 180 reads as 180 rather than -180. */
