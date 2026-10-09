@@ -1,13 +1,16 @@
 "use client";
 
 import { ContextMenu } from "@base-ui/react/context-menu";
+import { type ReactNode, useState } from "react";
 import {
+  AlignCenterVertical,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
   ChevronRight,
   ClipboardPaste,
+  Code2,
   Copy,
   CopyPlus,
   Download,
@@ -19,15 +22,17 @@ import {
   type LucideIcon,
   MousePointer2,
   Scissors,
+  Sparkles,
   Trash2,
   Unlock,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
 
-import { useEditorStore } from "@/stores/editor";
-
+import { ARRANGE_ICONS, runArrange } from "./ArrangeMenu";
 import type { Editor, ZOrderMove } from "./editor-core";
+import { useEditorStore } from "@/stores/editor";
+import { ALIGN_ACTIONS } from "./align-actions";
 import { exportToFile } from "./ExportMenu";
+import { ARRANGE_MODES } from "./arrange";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? "⌘" : "Ctrl+";
@@ -122,6 +127,19 @@ function MenuItems({ editor }: { editor: Editor }) {
     </Submenu>
   );
 
+  const arrangeItems = (
+    <Submenu icon={Sparkles} label={has ? "Arrange selection" : "Arrange board"}>
+      {ARRANGE_MODES.map(({ mode, label }) => (
+        <Item
+          key={mode}
+          icon={ARRANGE_ICONS[mode]}
+          label={label}
+          onClick={() => runArrange(editor, mode)}
+        />
+      ))}
+    </Submenu>
+  );
+
   if (!has) {
     return (
       <>
@@ -139,6 +157,14 @@ function MenuItems({ editor }: { editor: Editor }) {
           keys={`${MOD}A`}
           onClick={() => editor.select(editor.sortedIds())}
         />
+        {!readOnly && (
+          <Item
+            icon={Code2}
+            label="Diagram from code…"
+            onClick={() => editor.ui.setImportOpen(true)}
+          />
+        )}
+        {!readOnly && editor.arrangeUnits([]).length >= 2 && arrangeItems}
         <ContextMenu.Separator className={separator} />
         {exportItems(false)}
         <ContextMenu.Separator className={separator} />
@@ -204,6 +230,20 @@ function MenuItems({ editor }: { editor: Editor }) {
               }
             />
           )}
+          {editor.alignTarget(selectedIds) && (
+            <Submenu icon={AlignCenterVertical} label="Align">
+              {ALIGN_ACTIONS.map((a) => (
+                <Item
+                  key={a.edge}
+                  icon={a.icon}
+                  label={a.label}
+                  keys={`Alt ${a.key}`}
+                  onClick={() => editor.align(selectedIds, a.edge)}
+                />
+              ))}
+            </Submenu>
+          )}
+          {editor.arrangesSelection(selectedIds) && arrangeItems}
           <Submenu icon={Layers} label="Order">
             {ORDER.map((o) => (
               <Item

@@ -110,12 +110,12 @@ export function onFontsLoaded(fn: () => void) {
   return () => void listeners.delete(fn);
 }
 
-export function ensureFont(id: string, weight: number) {
+export function ensureFont(id: string, weight: number, italic = false) {
   if (typeof document === "undefined" || !document.fonts) return;
-  const key = `${id}:${weight}`;
+  const key = `${id}:${weight}:${italic}`;
   if (requested.has(key)) return;
   requested.add(key);
-  const spec = `${weight} 16px ${fontFamily(id)}`;
+  const spec = `${italic ? "italic " : ""}${weight} 16px ${fontFamily(id)}`;
   if (document.fonts.check(spec)) return;
   document.fonts
     .load(spec)

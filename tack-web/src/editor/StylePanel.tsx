@@ -16,6 +16,13 @@ import {
   Minus,
   Plus,
   Trash2,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
   Lock,
   Group,
   Ungroup,
@@ -23,12 +30,29 @@ import {
 
 import type { Editor, ShapeKnobs, StyleProps, ZOrderMove } from "./editor-core";
 import { MAX_POINTS, MAX_SIDES, MIN_POINTS, MIN_SIDES } from "./shapes/polygon";
-import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "./shapes/text";
+import { HEADER_COLORS, setTableFields } from "./shapes/table-fields";
+import { fieldsToText, textToFields } from "./shapes/table-text";
+import type { TableField, TableProps } from "./shapes/table";
 import { Slider as UiSlider } from "@/components/ui/slider";
+import { ARRANGE_ICONS, runArrange } from "./ArrangeMenu";
 import { shapeRegistry } from "./shapes/registry";
 import { useEditorStore } from "@/stores/editor";
 import { MAX_STROKE_WIDTH } from "./shapes/box";
+import { ALIGN_ACTIONS } from "./align-actions";
 import { useShape } from "./sync/useShapes";
+import { ARRANGE_MODES } from "./arrange";
+import {
+  MAX_FONT_SIZE,
+  MAX_LETTER_SPACING,
+  MAX_LINE_HEIGHT,
+  MIN_FONT_SIZE,
+  MIN_LETTER_SPACING,
+  MIN_LINE_HEIGHT,
+  hasTextStyle,
+  textBox,
+  type TextProps,
+  toggleTextStyle,
+} from "./shapes/text";
 import {
   closestWeight,
   DEFAULT_WEIGHT,
@@ -84,14 +108,14 @@ const WIDTHS = [
 
 const MAX_RADIUS = 200;
 
-/** Smallest to largest. Medium is the size new text starts at. */
+/** Smallest to largest. Medium (16) is the size new text starts at; any size can be typed. */
 export const FONT_SIZES = [
   { value: 12, short: "XS", label: "Extra small" },
-  { value: 16, short: "S", label: "Small" },
-  { value: 24, short: "M", label: "Medium" },
-  { value: 32, short: "L", label: "Large" },
-  { value: 48, short: "XL", label: "Extra large" },
-  { value: 64, short: "2XL", label: "Huge" },
+  { value: 14, short: "S", label: "Small" },
+  { value: 16, short: "M", label: "Medium" },
+  { value: 24, short: "L", label: "Large" },
+  { value: 32, short: "XL", label: "Extra large" },
+  { value: 48, short: "2XL", label: "Huge" },
 ] as const;
 
 const LAYER_ACTIONS: { move: ZOrderMove; label: string; icon: typeof ArrowUp }[] = [
@@ -307,6 +331,53 @@ function NumberInput({
 }
 
 /** A one-line text box that commits on Enter or blur; Escape puts the old text back. */
+/**
+ * A table's fields as editable text, one per line (`name type pk fk // note`). Saves on
+ * Ctrl/⌘+Enter or when focus leaves; Escape puts it back.
+ */
+function FieldsEditor({
+  editor,
+  id,
+  fields,
+}: {
+  editor: Editor;
+  id: string;
+  fields: TableField[];
+}) {
+  const original = fieldsToText(fields);
+  const [draft, setDraft] = useState(original);
+  const commit = () => {
+    if (draft === original) return;
+    const next = textToFields(draft);
+    if (!next.length) return setDraft(original); // a table keeps at least one field
+    setTableFields(editor, id, next);
+  };
+  return (
+    <div>
+      <textarea
+        aria-label="Fields"
+        value={draft}
+        spellCheck={false}
+        rows={Math.min(14, Math.max(4, draft.split("\n").length + 1))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+          if (e.key === "Escape") setDraft(original);
+        }}
+        className="text-ink focus-visible:border-primary focus-visible:ring-primary/20 w-full resize-y rounded-lg border bg-[#fafafa] px-2.5 py-2 font-mono text-[11px] leading-relaxed outline-none focus-visible:ring-3"
+      />
+      <p className="text-ink/45 mt-1 text-[10.5px] leading-snug">
+        One per line: <code>name type pk fk // note</code>. Arrows stay on their fields.
+      </p>
+    </div>
+  );
+}
+
 function TextField({
   label,
   value,
@@ -486,14 +557,75 @@ export function StylePanel({ editor }: { editor: Editor }) {
   const set = (patch: Editable) => editor.setStyle(patch);
   const setLive = (patch: Editable) => editor.setStyle(patch, { transient: true });
   const same = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+  const alignTo = editor.readOnly ? null : editor.alignTarget(selectedIds);
+  const textsSelected = selectedIds
+    .map((id) => editor.getValidShape(id))
+    .filter((s) => s?.type === "text")
+    .map((s) => s!.props as TextProps);
+
+  /**
+   * Turns wrapping on (each text keeps its current width, so nothing moves until you narrow it)
+   * or off (boxes grow to fit again). Per shape, since each has its own width.
+   */
+  const setWrap = (wrap: boolean) => {
+    const patches: Parameters<Editor["updateShapes"]>[0] = {};
+    for (const id of selectedIds) {
+      const s = editor.getValidShape(id);
+      if (!s || s.locked || s.type !== "text") continue;
+      const p = s.props as TextProps;
+      if ((p.width != null) === wrap) continue;
+      patches[id] = { props: { ...p, width: wrap ? Math.ceil(textBox(p).w) : null } };
+    }
+    if (!Object.keys(patches).length) return;
+    editor.markHistory();
+    editor.updateShapes(patches);
+    editor.markHistory();
+  };
 
   return (
     <aside
       aria-label="Selection style"
       // Keyed by shape so the text inputs reset when the selection changes.
       key={first.id}
-      className="absolute top-3 left-3 max-h-[calc(100dvh-96px)] w-59 space-y-4 overflow-y-auto rounded-2xl border bg-white p-3.5 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
+      className="absolute top-3 left-3 max-h-[calc(100dvh-96px)] w-68 space-y-4 overflow-y-auto rounded-2xl border bg-white p-3.5 shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
     >
+      {first.type === "db-table" && (
+        <Section title="Fields">
+          <FieldsEditor
+            // A fresh editor whenever the fields change from elsewhere (undo, someone else).
+            key={fieldsToText((props as unknown as TableProps).fields)}
+            editor={editor}
+            id={first.id}
+            fields={(props as unknown as TableProps).fields}
+          />
+          <div className="mt-2 grid grid-cols-6 gap-1.5">
+            {HEADER_COLORS.map((c) => (
+              <Swatch
+                key={c.value}
+                color={c.value}
+                label={`${c.label} header`}
+                selected={same((props as unknown as TableProps).headerColor, c.value)}
+                onClick={() => {
+                  editor.markHistory();
+                  editor.updateShapes(
+                    Object.fromEntries(
+                      selectedIds
+                        .map((id) => editor.getValidShape(id))
+                        .filter((s) => s?.type === "db-table" && !s.locked)
+                        .map((s) => [
+                          s!.id,
+                          { props: { ...(s!.props as object), headerColor: c.value } },
+                        ]),
+                    ),
+                  );
+                  editor.markHistory();
+                }}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
       {def?.variants && has("variant") && (
         <Section title="Look">
           <div
@@ -517,7 +649,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
       {has("label") && (
         <Section title="Label">
           <TextField
@@ -528,7 +659,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           />
         </Section>
       )}
-
       {has("fill") && (
         <Section title="Fill">
           <div className="grid grid-cols-8 gap-1.5">
@@ -550,7 +680,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           />
         </Section>
       )}
-
       {has("stroke") && (
         <Section title="Stroke">
           <div className="grid grid-cols-8 gap-1.5">
@@ -572,7 +701,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           />
         </Section>
       )}
-
       {has("color") && (
         <Section title="Text colour">
           <div className="grid grid-cols-8 gap-1.5">
@@ -592,6 +720,69 @@ export function StylePanel({ editor }: { editor: Editor }) {
             value={props.color!}
             onCommit={(color) => set({ color })}
           />
+        </Section>
+      )}
+      {has("markdown") && (
+        <Section title="Format">
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+            {(
+              [
+                [true, "Markdown"],
+                [false, "Plain text"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={props.markdown === value}
+                title={
+                  value
+                    ? "# headings, **bold**, *italic*, `code`, - lists, - [ ] tasks, > quotes, [links](https://…)"
+                    : "Show the text exactly as typed"
+                }
+                onClick={() => set({ markdown: value })}
+                className={cn(
+                  "focus-visible:ring-primary/40 text-ink h-7 rounded-lg text-xs font-semibold outline-none focus-visible:ring-3",
+                  props.markdown === value ? "bg-white shadow-sm" : "text-ink/50 hover:bg-white/60",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+      {first.type === "text" && (
+        <Section title="Style">
+          <div className="grid grid-cols-4 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+            {(
+              [
+                ["bold", "Bold (Ctrl/⌘ B)", Bold],
+                ["italic", "Italic (Ctrl/⌘ I)", Italic],
+                ["underline", "Underline (Ctrl/⌘ U)", Underline],
+                ["strike", "Strikethrough (Ctrl/⌘ Shift X)", Strikethrough],
+              ] as const
+            ).map(([key, label, Icon]) => {
+              const on =
+                textsSelected.length > 0 && textsSelected.every((p) => hasTextStyle(p, key));
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  title={label}
+                  aria-label={label}
+                  aria-pressed={on}
+                  onClick={() => toggleTextStyle(editor, selectedIds, key)}
+                  className={cn(
+                    "focus-visible:ring-primary/40 grid h-7 place-items-center rounded-lg outline-none focus-visible:ring-3",
+                    on ? "text-ink bg-white shadow-sm" : "text-ink/55 hover:bg-white/60",
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                </button>
+              );
+            })}
+          </div>
         </Section>
       )}
 
@@ -627,7 +818,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
       {has("fontWeight") && (
         <Section title={`Weight · ${WEIGHT_NAMES[props.fontWeight ?? DEFAULT_WEIGHT] ?? ""}`}>
           <div className="grid grid-cols-3 gap-1 rounded-xl bg-[#f3f3f5] p-1">
@@ -651,7 +841,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
       {has("fontSize") && (
         <Section title="Font size">
           <div className="flex items-center gap-1.5">
@@ -685,7 +874,108 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
+      {has("align") && has("lineHeight") && (
+        <Section title="Paragraph">
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5">
+              <div className="grid flex-1 grid-cols-2 gap-1 rounded-xl bg-[#f3f3f5] p-1">
+                {(
+                  [
+                    [false, "Auto", "The box grows to fit the longest line"],
+                    [true, "Wrap", "Lines wrap at the box's width (or drag a side handle)"],
+                  ] as const
+                ).map(([wrap, label, title]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    title={title}
+                    aria-pressed={(props.width != null) === wrap}
+                    onClick={() => setWrap(wrap)}
+                    className={cn(
+                      "focus-visible:ring-primary/40 text-ink h-7 rounded-lg text-xs font-semibold outline-none focus-visible:ring-3",
+                      (props.width != null) === wrap
+                        ? "bg-white shadow-sm"
+                        : "text-ink/50 hover:bg-white/60",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-0.5 rounded-xl bg-[#f3f3f5] p-1">
+                {(
+                  [
+                    ["left", "Align left", AlignLeft],
+                    ["center", "Align centre", AlignCenter],
+                    ["right", "Align right", AlignRight],
+                  ] as const
+                ).map(([align, label, Icon]) => (
+                  <button
+                    key={align}
+                    type="button"
+                    title={label}
+                    aria-label={label}
+                    aria-pressed={props.align === align}
+                    onClick={() => set({ align })}
+                    className={cn(
+                      "focus-visible:ring-primary/40 grid size-7 place-items-center rounded-lg outline-none focus-visible:ring-3",
+                      props.align === align
+                        ? "text-ink bg-white shadow-sm"
+                        : "text-ink/50 hover:bg-white/60",
+                    )}
+                  >
+                    <Icon className="size-3.5" />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-ink/70 w-16 shrink-0 text-xs">Line height</span>
+              <Slider
+                label="Line height"
+                editor={editor}
+                value={props.lineHeight ?? 1.25}
+                min={MIN_LINE_HEIGHT}
+                max={MAX_LINE_HEIGHT}
+                step={0.05}
+                onChange={(lineHeight) => setLive({ lineHeight })}
+              />
+              <NumberInput
+                key={props.lineHeight}
+                label="Line height"
+                value={props.lineHeight ?? 1.25}
+                min={MIN_LINE_HEIGHT}
+                max={MAX_LINE_HEIGHT}
+                step={0.05}
+                suffix="×"
+                onCommit={(lineHeight) => set({ lineHeight })}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-ink/70 w-16 shrink-0 text-xs">Letters</span>
+              <Slider
+                label="Letter spacing"
+                editor={editor}
+                value={props.letterSpacing ?? 0}
+                min={MIN_LETTER_SPACING}
+                max={20}
+                step={0.5}
+                onChange={(letterSpacing) => setLive({ letterSpacing })}
+              />
+              <NumberInput
+                key={props.letterSpacing}
+                label="Letter spacing"
+                value={props.letterSpacing ?? 0}
+                min={MIN_LETTER_SPACING}
+                max={MAX_LETTER_SPACING}
+                step={0.5}
+                suffix="px"
+                onCommit={(letterSpacing) => set({ letterSpacing })}
+              />
+            </div>
+          </div>
+        </Section>
+      )}
       {has("route") && (
         <Section title="Line style">
           <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f3f3f5] p-1">
@@ -712,7 +1002,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
       {has("arrowStart") && (
         <Section title="Arrowheads">
           <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f3f3f5] p-1">
@@ -739,7 +1028,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
       {has("strokeWidth") && (
         <Section title="Stroke width">
           <div className="flex items-center gap-1.5">
@@ -774,7 +1062,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
       {has("radius") && (
         <Section title="Corner radius">
           <div className="flex items-center gap-2">
@@ -798,7 +1085,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
-
       {has("sides") && (
         <Section title="Sides">
           <Stepper
@@ -810,7 +1096,6 @@ export function StylePanel({ editor }: { editor: Editor }) {
           />
         </Section>
       )}
-
       {has("points") && (
         <Section title="Star">
           <div className="space-y-2">
@@ -841,6 +1126,68 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </div>
         </Section>
       )}
+      {alignTo && (
+        <Section title={alignTo.under ? "Align to the shape underneath" : "Align"}>
+          <div className="grid grid-cols-6 gap-0.5 rounded-xl bg-[#f3f3f5] p-1">
+            {ALIGN_ACTIONS.map((a) => (
+              <button
+                key={a.edge}
+                type="button"
+                title={`${a.label} (Alt ${a.key})`}
+                aria-label={a.label}
+                onClick={() => editor.align(selectedIds, a.edge)}
+                className="text-ink/70 focus-visible:ring-primary/40 grid h-7 place-items-center rounded-lg outline-none hover:bg-white focus-visible:ring-3"
+              >
+                <a.icon className="size-4" />
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {!editor.readOnly && editor.arrangesSelection(selectedIds) && (
+        <Section title="Arrange">
+          <div className="grid grid-cols-4 gap-0.5 rounded-xl bg-[#f3f3f5] p-1">
+            {ARRANGE_MODES.map(({ mode, label, description }) => {
+              const Icon = ARRANGE_ICONS[mode];
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  title={`${label}: ${description}`}
+                  aria-label={label}
+                  onClick={() => runArrange(editor, mode)}
+                  className="text-ink/70 focus-visible:ring-primary/40 grid h-7 place-items-center rounded-lg outline-none hover:bg-white focus-visible:ring-3"
+                >
+                  <Icon className="size-4" />
+                </button>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      <Section title="Opacity">
+        <div className="flex items-center gap-2">
+          <Slider
+            label="Opacity"
+            editor={editor}
+            value={Math.round((first.opacity ?? 1) * 100)}
+            min={0}
+            max={100}
+            onChange={(pct) => editor.setOpacity(selectedIds, pct / 100, { transient: true })}
+          />
+          <NumberInput
+            key={first.opacity}
+            label="Opacity in percent"
+            value={Math.round((first.opacity ?? 1) * 100)}
+            min={0}
+            max={100}
+            suffix="%"
+            onCommit={(pct) => editor.setOpacity(selectedIds, pct / 100)}
+          />
+        </div>
+      </Section>
 
       <Section title="Rotation">
         <div className="flex items-center gap-2">
@@ -891,9 +1238,8 @@ export function StylePanel({ editor }: { editor: Editor }) {
           </button>
         </div>
       </Section>
-
       <Section title="Layer">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center justify-around gap-1">
           {LAYER_ACTIONS.map(({ move, label, icon: Icon }) => (
             <button
               key={move}

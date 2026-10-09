@@ -46,3 +46,34 @@ export function takeTokenFromUrl(): string | null {
 export function shareUrl(boardId: string, token: string) {
   return `${window.location.origin}/b/${boardId}#t=${encodeURIComponent(token)}`;
 }
+
+/* ── Boards this browser just created ───────────────────────────────────── */
+
+const newKey = (boardId: string) => `tack:new-board:${boardId}`;
+
+/** Marks a board as just created here, so it opens with the template picker. */
+export function markNewBoard(boardId: string) {
+  try {
+    sessionStorage.setItem(newKey(boardId), "1");
+  } catch {
+    // No storage: the board just opens blank.
+  }
+}
+
+/** Whether this browser just created the board and hasn't picked a template for it yet. */
+export function isNewBoard(boardId: string): boolean {
+  try {
+    return sessionStorage.getItem(newKey(boardId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** The template choice has been made (or skipped); don't offer it again. */
+export function clearNewBoard(boardId: string) {
+  try {
+    sessionStorage.removeItem(newKey(boardId));
+  } catch {
+    // Nothing to clear.
+  }
+}

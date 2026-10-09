@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
 import type { WebsocketProvider } from "y-websocket";
+import { useEffect } from "react";
 import * as Y from "yjs";
 
+import { MIGRATION_ORIGIN, migrateBoard, isNewer, shapeVersion } from "./migrate";
+import { type BoardDoc, SCHEMA_VERSION } from "./board-doc";
 import { type Editor, LOCAL_ORIGIN } from "../editor-core";
 import { shapeRegistry } from "../shapes/registry";
-
-import { type BoardDoc, SCHEMA_VERSION } from "./board-doc";
-import { MIGRATION_ORIGIN, migrateBoard, isNewer, shapeVersion } from "./migrate";
 
 /**
  * Upgrades the board once it has synced (and again after each reconnect), and switches the editor

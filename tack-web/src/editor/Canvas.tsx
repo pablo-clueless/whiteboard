@@ -6,17 +6,19 @@ import type { KonvaEventObject } from "konva/lib/Node";
 import type { Awareness } from "y-protocols/awareness";
 import Konva from "konva";
 
-import { useFrozenShape, useShape, useVisibleShapeIds } from "./sync/useShapes";
 import { pageToScreen, screenToPage, useEditorStore, zoomAt } from "@/stores/editor";
+import { useFrozenShape, useShape, useVisibleShapeIds } from "./sync/useShapes";
 import type { Box, Shape, Tool, ToolEvent, Vec } from "./types";
 import { SNAP_DISTANCE, snapPoint } from "./snapping";
-import { unionBox } from "./geometry";
 import { type Terminal, toPage } from "./bindings";
 import { shapeRegistry } from "./shapes/registry";
+import { ALIGN_ACTIONS } from "./align-actions";
+import { toggleTextStyle } from "./shapes/text";
 import { toolRegistry } from "./tools/registry";
 import type { Editor } from "./editor-core";
 import { RemotePresence } from "./Presence";
 import { handTool } from "./tools/hand";
+import { unionBox } from "./geometry";
 
 const SELECTION_BLUE = "#3366ff";
 /** Gap (screen pixels) between a selected shape and its resize box. */
@@ -278,6 +280,21 @@ function useCanvasInput(editor: Editor, toolId: string) {
       } else if (mod && key === "a") {
         e.preventDefault();
         editor.select(editor.sortedIds());
+      } else if (
+        (mod && !e.shiftKey && (key === "b" || key === "i" || key === "u")) ||
+        (mod && e.shiftKey && key === "x")
+      ) {
+        // Text styles (also keeps Ctrl+U from opening the page source).
+        const style = ({ b: "bold", i: "italic", u: "underline", x: "strike" } as const)[
+          key as "b" | "i" | "u" | "x"
+        ];
+        if (toggleTextStyle(editor, selectedIds, style)) e.preventDefault();
+      } else if (e.altKey && !mod && ALIGN_ACTIONS.some((a) => a.code === e.code)) {
+        // Alt+A/H/D align left/centre/right, Alt+W/V/S top/middle/bottom. By key position, so it
+        // works whatever character Alt produces on the layout.
+        e.preventDefault();
+        const action = ALIGN_ACTIONS.find((a) => a.code === e.code)!;
+        editor.align(selectedIds, action.edge);
       } else if (mod && key === "g") {
         // Group, or with Shift ungroup (rather than the browser's find-next).
         e.preventDefault();
@@ -391,7 +408,8 @@ const ShapeView = memo(function ShapeView({ editor, id }: { editor: Editor; id: 
       x={shape.x}
       y={shape.y}
       rotation={shape.rotation}
-      opacity={erasing ? 0.25 : 1}
+      // The eraser fades what it's about to remove, on top of the shape's own opacity.
+      opacity={(shape.opacity ?? 1) * (erasing ? 0.25 : 1)}
     >
       <def.Component shape={{ ...shape, props }} isSelected={isSelected} />
     </Group>
@@ -468,11 +486,51 @@ function SelectionHandles({
   // What the dragged handle can snap to, fixed when the resize starts.
   const snapTargets = useRef<Box[] | null>(null);
 
+  // Shapes being resized by width (a side handle on a `liveWidth` shape, e.g. text): their
+  // width prop changes as you drag, so text rewraps, instead of the node being stretched.
+  const liveIds = useRef<Set<string>>(new Set());
+
   const onTransformStart = () => {
     editor.startGesture();
-    const ids = trRef.current?.nodes().map((n) => n.id()) ?? [];
-    editor.freeze(ids);
+    const tr = trRef.current;
+    const ids = tr?.nodes().map((n) => n.id()) ?? [];
+    const side = /^middle-(left|right)$/.test(tr?.getActiveAnchor() ?? "");
+    liveIds.current = new Set(
+      side
+        ? ids.filter((id) => {
+            const s = editor.getShape(id);
+            return !!s && !!shapeRegistry.get(s.type)?.liveWidth;
+          })
+        : [],
+    );
+    editor.freeze(ids.filter((id) => !liveIds.current.has(id)));
     snapTargets.current = editor.snapTargets(ids);
+  };
+
+  /** Turns this move's horizontal stretch of each live-width node into a new width prop. */
+  const applyLiveWidths = () => {
+    for (const node of trRef.current?.nodes() ?? []) {
+      if (!liveIds.current.has(node.id())) continue;
+      const sx = node.scaleX();
+      // Konva measured this move's stretch against the node as last drawn (which can lag the
+      // props by a frame), so scale that width, not the latest prop, or the stretches compound.
+      const drawn = node.getClientRect({ skipTransform: true }).width;
+      node.scale({ x: 1, y: 1 });
+      const shape = editor.getValidShape(node.id());
+      const live = shape && shapeRegistry.get(shape.type)?.liveWidth;
+      if (!shape || !live) continue;
+      const width = Math.max(live.min, (drawn || live.get(shape)) * Math.abs(sx));
+      // Konva measures the node again on the next move, before React has re-rendered it; size
+      // its box now so that measurement matches.
+      (node as Konva.Group).findOne(".live-width-box")?.width(width);
+      editor.updateShapes({
+        [shape.id]: {
+          x: node.x(),
+          y: node.y(),
+          props: { ...(shape.props as object), width },
+        },
+      });
+    }
   };
 
   /**
@@ -501,11 +559,14 @@ function SelectionHandles({
   };
 
   const onTransform = () => {
+    applyLiveWidths();
     const patches = transformedPatches();
     editor.writeEachFrame(() => editor.updateShapes(patches));
   };
 
   const onTransformEnd = () => {
+    applyLiveWidths();
+    liveIds.current = new Set();
     const patches = transformedPatches();
     editor.flush();
     editor.updateShapes(patches);
@@ -515,6 +576,8 @@ function SelectionHandles({
     editor.endGesture();
     snapTargets.current = null;
     editor.ui.setGuides([]);
+    // Rewrapped text may now be taller or shorter; fit the box to it once it has re-rendered.
+    requestAnimationFrame(() => trRef.current?.forceUpdate());
   };
   return (
     <Transformer

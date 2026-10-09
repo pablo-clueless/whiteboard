@@ -8,6 +8,28 @@ import type { WebsocketProvider } from "y-websocket";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { COMPONENT_DRAG_TYPE, type ComponentRef } from "./component-catalog";
+import { describe, detectDiagram, insertDiagram } from "./import/diagram";
+import { ComponentGroup, insertComponent } from "./ComponentGroup";
+import { screenToPage, useEditorStore } from "@/stores/editor";
+import { useMigrations } from "./sync/useMigrations";
+import { ShortcutsDialog } from "./ShortcutsDialog";
+import { Editor as EditorApi } from "./editor-core";
+import { Toolbar, ZoomControls } from "./Toolbar";
+import { usePresencePublisher } from "./Presence";
+import { TemplatePicker } from "./TemplatePicker";
+import { Toaster } from "@/components/ui/sonner";
+import type { BoardDoc } from "./sync/board-doc";
+import { ImportDialog } from "./ImportDialog";
+import { LabelEditor } from "./LabelEditor";
+import { ShareDialog } from "./ShareDialog";
+import { api, type Role } from "@/lib/api";
+import { CanvasMenu } from "./CanvasMenu";
+import { ExportMenu } from "./ExportMenu";
+import { StylePanel } from "./StylePanel";
+import { TextEditor } from "./TextEditor";
+import { Code2 } from "lucide-react";
+import { Canvas } from "./Canvas";
 import {
   useBoard,
   useConnectionStatus,
@@ -15,24 +37,6 @@ import {
   useOnPermanentClose,
   usePeerCount,
 } from "./sync/useBoard";
-import { COMPONENT_DRAG_TYPE, type ComponentRef } from "./component-catalog";
-import { ComponentGroup, insertComponent } from "./ComponentGroup";
-import { Editor as EditorApi } from "./editor-core";
-import { Toolbar, ZoomControls } from "./Toolbar";
-import { usePresencePublisher } from "./Presence";
-import { Toaster } from "@/components/ui/sonner";
-import type { BoardDoc } from "./sync/board-doc";
-import { screenToPage, useEditorStore } from "@/stores/editor";
-import { useMigrations } from "./sync/useMigrations";
-import { ShortcutsDialog } from "./ShortcutsDialog";
-import { CanvasMenu } from "./CanvasMenu";
-import { LabelEditor } from "./LabelEditor";
-import { ShareDialog } from "./ShareDialog";
-import { api, type Role } from "@/lib/api";
-import { ExportMenu } from "./ExportMenu";
-import { StylePanel } from "./StylePanel";
-import { TextEditor } from "./TextEditor";
-import { Canvas } from "./Canvas";
 
 type EditorProps = {
   boardId: string;
@@ -133,6 +137,17 @@ function BoardEditor({
         e.preventDefault();
         return;
       }
+      // DBML or Mermaid becomes a diagram.
+      const diagram = text ? detectDiagram(text) : null;
+      if (diagram) {
+        e.preventDefault();
+        if (diagram.kind === "unsupported") {
+          editor.notify(`${describe(diagram)}. Flowcharts and ER diagrams are.`, "info");
+        } else if (insertDiagram(editor, diagram).length) {
+          editor.notify(`Drew ${describe(diagram)}.`, "info");
+        }
+        return;
+      }
       const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
       if (!files.length) return;
       e.preventDefault();
@@ -201,6 +216,17 @@ function BoardEditor({
           </span>
         )}
         <StatusBadge provider={provider} />
+        {!editor.readOnly && (
+          <button
+            type="button"
+            title="Diagram from code (DBML, Mermaid)"
+            onClick={() => editor.ui.setImportOpen(true)}
+            className="text-ink focus-visible:ring-primary/40 pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border bg-white px-3 text-xs font-semibold shadow-sm outline-none hover:bg-[#f8f8f9] focus-visible:ring-3"
+          >
+            <Code2 className="size-3.5" />
+            From code
+          </button>
+        )}
         <ExportMenu editor={editor} />
         <ShareDialog
           boardId={boardId}
@@ -212,6 +238,8 @@ function BoardEditor({
       </div>
       {locked && <LockedBanner reason={locked} />}
       <ShortcutsDialog editor={editor} />
+      <ImportDialog editor={editor} />
+      <TemplatePicker boardId={boardId} editor={editor} provider={provider} />
       <Toaster theme="light" position="bottom-center" offset={80} />
     </div>
   );
