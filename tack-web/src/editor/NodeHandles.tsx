@@ -4,8 +4,8 @@ import { Circle, Group, Line, Path, Rect } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 
 import { type Curves, edgeCount, edgeMiddle, insertNode, moveNode, pathData } from "./nodes";
+import { canAttach, type Terminal, toLocal, toPage } from "./bindings";
 import { screenToPage, useEditorStore } from "@/stores/editor";
-import { type Terminal, toLocal, toPage } from "./bindings";
 import type { Editor } from "./editor-core";
 import { useShape } from "./sync/useShapes";
 import type { Shape, Vec } from "./types";
@@ -121,7 +121,7 @@ export function NodeHandles({ editor }: { editor: Editor }) {
       if (press.terminal) {
         const other = editor.getBinding(id, press.terminal === "start" ? "end" : "start");
         const c = editor.connectionAt(at, { excludeId: id });
-        const hit = c && c.shapeId !== other?.toId ? c : null;
+        const hit = c && canAttach(c, other) ? c : null;
         editor.ui.setConnect(hit ? { shapeId: hit.shapeId, port: hit.port } : null);
         if (hit) at = hit.point;
       }
@@ -162,7 +162,7 @@ export function NodeHandles({ editor }: { editor: Editor }) {
         const at = pageAt(ev, container);
         const other = editor.getBinding(id, press.terminal === "start" ? "end" : "start");
         const c = editor.connectionAt(at, { excludeId: id });
-        if (c && c.shapeId !== other?.toId)
+        if (c && canAttach(c, other))
           editor.setBinding(id, press.terminal, { toId: c.shapeId, anchor: c.anchor });
       }
       editor.endGesture();

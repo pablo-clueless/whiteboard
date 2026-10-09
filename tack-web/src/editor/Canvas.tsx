@@ -10,8 +10,8 @@ import { pageToScreen, screenToPage, useEditorStore, zoomAt } from "@/stores/edi
 import { useFrozenShape, useShape, useVisibleShapeIds } from "./sync/useShapes";
 import { NodeHandles, showsNodesWhenSelected } from "./NodeHandles";
 import type { Box, Shape, Tool, ToolEvent, Vec } from "./types";
+import { canAttach, type Terminal, toPage } from "./bindings";
 import { SNAP_DISTANCE, snapPoint } from "./snapping";
-import { type Terminal, toPage } from "./bindings";
 import { shapeRegistry } from "./shapes/registry";
 import { ALIGN_ACTIONS } from "./align-actions";
 import { toggleTextStyle } from "./shapes/text";
@@ -682,8 +682,8 @@ function EndpointHandles({ editor }: { editor: Editor }) {
     if (shape.type !== "arrow") return null;
     const other = editor.getBinding(shape.id, terminal === "start" ? "end" : "start");
     const c = editor.connectionAt(at, { excludeId: shape.id });
-    // An arrow from a shape to itself has no direction; leave the end free instead.
-    return c && c.shapeId !== other?.toId ? c : null;
+    // The other end's own point would make an arrow of no length; leave the end free there.
+    return c && canAttach(c, other) ? c : null;
   };
 
   const moveEnd = (terminal: Terminal, at: Vec) => {
