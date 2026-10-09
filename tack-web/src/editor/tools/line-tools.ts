@@ -3,6 +3,7 @@ import { MoveUpRight, Slash } from "lucide-react";
 import type { Connection, Editor } from "../editor-core";
 import type { Tool, ToolEvent, Vec } from "../types";
 import { distance } from "../geometry";
+import { canAttach } from "../bindings";
 
 const DRAW_THRESHOLD = 4;
 /** Length of a line dropped with a click instead of a drag. */
@@ -124,7 +125,10 @@ function makeLineTool(opts: {
   };
 }
 
-/** Where the end would connect. An arrow from a shape to itself is left free instead. */
+/**
+ * Where the end would connect. Another point on the start's own shape makes a self-loop; the
+ * start's own point leaves the end free.
+ */
 function endConnection(
   editor: Editor,
   drawing: { from: Connection | null },
@@ -132,7 +136,8 @@ function endConnection(
   arrowId: string,
 ): Connection | null {
   const to = editor.connectionAt(point, { excludeId: arrowId });
-  return to && to.shapeId !== drawing.from?.shapeId ? to : null;
+  const from = drawing.from && { toId: drawing.from.shapeId, anchor: drawing.from.anchor };
+  return to && canAttach(to, from) ? to : null;
 }
 
 /**

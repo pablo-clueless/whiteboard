@@ -77,4 +77,53 @@ describe("orthogonalRoute", () => {
     );
     for (const [a, b] of segments(route)) expect(crosses(a, b, wall)).toBe(false);
   });
+
+  describe("self-loops (both ends on one shape)", () => {
+    const UP = { x: 0, y: -1 };
+    /** A loop's route: right angles only, never through the shape, leaving and arriving right. */
+    const expectLoop = (route: number[], from: Vec, fromDir: Vec, to: Vec, toDir: Vec) => {
+      expect(route.slice(0, 2)).toEqual([from.x, from.y]);
+      expect(route.slice(-2)).toEqual([to.x, to.y]);
+      for (const [a, b] of segments(route)) {
+        expect(a.x === b.x || a.y === b.y).toBe(true);
+        expect(crosses(a, b, A)).toBe(false);
+      }
+      const p = pts(route);
+      const out = { x: p[1].x - p[0].x, y: p[1].y - p[0].y };
+      const last = p.length - 1;
+      const into = { x: p[last].x - p[last - 1].x, y: p[last].y - p[last - 1].y };
+      expect(out.x * fromDir.x + out.y * fromDir.y).toBeGreaterThan(0);
+      expect(into.x * toDir.x + into.y * toDir.y).toBeLessThan(0);
+    };
+
+    it("loops round the corner between two neighbouring sides", () => {
+      const [right, top] = [
+        { x: 100, y: 30 },
+        { x: 50, y: 0 },
+      ];
+      const route = orthogonalRoute(
+        { point: right, dir: RIGHT },
+        { point: top, dir: UP },
+        [A, A],
+        24,
+      );
+      expectLoop(route, right, RIGHT, top, UP);
+      // Out, up, across and down: three bends, staying close to the corner.
+      expect(pts(route)).toHaveLength(5);
+    });
+
+    it("goes over or under the shape between opposite sides", () => {
+      const [left, right] = [
+        { x: 0, y: 30 },
+        { x: 100, y: 30 },
+      ];
+      const route = orthogonalRoute(
+        { point: left, dir: LEFT },
+        { point: right, dir: RIGHT },
+        [A, A],
+        24,
+      );
+      expectLoop(route, left, LEFT, right, RIGHT);
+    });
+  });
 });
