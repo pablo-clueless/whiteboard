@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { WebsocketProvider } from "y-websocket";
 
+import type { PresenceState } from "../Presence";
 import {
   BOARD_FULL_EVENT,
   type BoardFullEvents,
@@ -93,5 +94,16 @@ export function usePeerCount(provider: WebsocketProvider) {
       return () => provider.awareness.off("change", onChange);
     },
     () => provider.awareness.getStates().size,
+  );
+}
+
+/** All the peers on the board, their ids, names and connection status. */
+export function usePeers(provider: WebsocketProvider) {
+  return useSyncExternalStore(
+    (onChange) => {
+      provider.awareness.on("change", onChange);
+      return () => provider.awareness.off("change", onChange);
+    },
+    () => provider.awareness.getStates() as Map<number, PresenceState>,
   );
 }

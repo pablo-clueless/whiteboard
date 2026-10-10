@@ -5,8 +5,9 @@ import "./builtins";
 import "@/plugins";
 
 import type { WebsocketProvider } from "y-websocket";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { cn } from "cn";
 
 import { getEntry, insertEntry, LIBRARY_DRAG_TYPE, useBoardComponents } from "./library";
 import { COMPONENT_DRAG_TYPE, type ComponentRef } from "./component-catalog";
@@ -39,7 +40,16 @@ import {
   useOnBoardFull,
   useOnPermanentClose,
   usePeerCount,
+  usePeers,
 } from "./sync/useBoard";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 type EditorProps = {
   boardId: string;
@@ -290,7 +300,16 @@ function LockedBanner({ reason }: { reason: "outdated" | "full" }) {
 
 function StatusBadge({ provider }: { provider: WebsocketProvider }) {
   const { status, synced } = useConnectionStatus(provider);
-  const peers = usePeerCount(provider);
+  const peersCount = usePeerCount(provider);
+  const peers = usePeers(provider);
+
+  const users = useMemo(() => {
+    if (!peers) return [];
+    return Array.from(peers.values())
+      .map((state) => state.user)
+      .filter((user): user is NonNullable<typeof user> => user != null);
+  }, [peers]);
+
   const label =
     status === "connected"
       ? synced
@@ -307,11 +326,41 @@ function StatusBadge({ provider }: { provider: WebsocketProvider }) {
         : "bg-amber-500";
 
   return (
-    <div className="bg-background/90 text-muted-foreground flex items-center gap-2 rounded-full border px-3 py-1 text-xs shadow-sm">
-      <span className={`size-2 rounded-full ${dot}`} />
-      {label}
-      <span className="text-muted-foreground/60">·</span>
-      {peers} {peers === 1 ? "person" : "people"}
-    </div>
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            title="Diagram from code (DBML, Mermaid)"
+            onClick={() => {}}
+            className="text-ink focus-visible:ring-primary/40 pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border bg-white px-3 text-xs font-semibold shadow-sm outline-none hover:bg-[#f8f8f9] focus-visible:ring-3"
+          >
+            <span className={`size-2 rounded-full ${dot}`} />
+            {label}
+            <span className="text-muted-foreground/60">·</span>
+            {peersCount} {peersCount === 1 ? "person" : "people"}
+          </button>
+        }
+      />
+      <PopoverContent align="end" className="sm:max-w-75">
+        <PopoverHeader>
+          <PopoverTitle>Collaborators</PopoverTitle>
+          <PopoverDescription></PopoverDescription>
+        </PopoverHeader>
+        <div className="space-y-1">
+          {users.map((user) => (
+            <div
+              className={cn(
+                "text-ink hover:bg-muted flex cursor-pointer items-center gap-x-2 rounded px-2 py-1 text-xs",
+              )}
+              key={user.id}
+            >
+              <span className="size-2 rounded-full" style={{ background: user.color }} />
+              <span>{user.name}</span>
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

@@ -23,9 +23,15 @@ const ANIMALS = [
   "Bison",
   "Raven",
   "Tapir",
+  "Tiger",
+  "Turtle",
 ];
 
-export type PresenceUser = { name: string; color: string };
+export type PresenceUser = {
+  id: string;
+  name: string;
+  color: string;
+};
 
 /** What each client shares about itself. Never persisted. */
 export type PresenceState = {
@@ -38,6 +44,7 @@ export type PresenceState = {
 /** A colour and a friendly name, stable for this client id. */
 export function presenceUser(clientId: number): PresenceUser {
   return {
+    id: clientId.toString(),
     name: `Anonymous ${ANIMALS[clientId % ANIMALS.length]}`,
     color: USER_COLORS[clientId % USER_COLORS.length],
   };
@@ -48,6 +55,14 @@ export function presenceUser(clientId: number): PresenceUser {
  * selection goes out whenever it changes.
  */
 export function usePresencePublisher(editor: Editor, awareness: Awareness) {
+  useEffect(() => {
+    awareness.setLocalStateField("user", presenceUser(awareness.clientID));
+  }, [awareness]);
+
+  useEffect(() => {
+    awareness.setLocalStateField("user", presenceUser(awareness.clientID));
+  }, [awareness]);
+
   useEffect(() => {
     awareness.setLocalStateField("user", presenceUser(awareness.clientID));
   }, [awareness]);
