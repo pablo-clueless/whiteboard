@@ -1,4 +1,4 @@
-export const PERIOOS = [
+export const PERIODS = [
   { label: "7 days", value: "7" },
   { label: "1 month", value: "30" },
   { label: "3 months", value: "90" },

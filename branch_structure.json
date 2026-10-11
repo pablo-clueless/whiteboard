@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "features/whiteboard",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "features/whiteboard": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "features/whiteboard",
+    "origin"
+  ]
+}

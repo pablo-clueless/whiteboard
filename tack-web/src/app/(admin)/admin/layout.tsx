@@ -12,7 +12,7 @@ export default function DashboardLayout({ children }: Props) {
       <Sidebar />
       <div className="h-full flex-1">
         <Header />
-        <div className="h-[calc(100%-56px)] w-full overflow-hidden p-4">{children}</div>
+        <div className="h-[calc(100%-56px)] w-full overflow-y-auto p-4">{children}</div>
       </div>
     </div>
   );
