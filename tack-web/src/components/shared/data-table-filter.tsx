@@ -83,7 +83,7 @@ export const DataTableFilter = <TData extends RowData>({
       case "select":
         return (
           <Select
-            onValueChange={(value) => onFilterChange(filter.key, value, filter.type)}
+            onValueChange={(value) => onFilterChange(filter.key, value || "", filter.type)}
             value={getFilterValues(filter.key)[0] || ""}
           >
             <SelectTrigger>
