@@ -8,3 +8,8 @@ export type Option = {
   description?: string;
   icon?: LucideIcon;
 };
+
+export interface TabProps {
+  tab: string;
+  className?: string;
+}
