@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 export { cn } from "cn";
 
 export function capitalize(value?: string) {
@@ -36,4 +37,10 @@ export function formatCatalogLabel(name?: string) {
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase())
     .replace(/\u0000RANGE(\d+)\u0000/g, (_, index) => ranges[Number(index)] ?? "");
+}
+
+export function formatDate(date?: Date | string, formatStr = "dd/MM/yy") {
+  if (!date) return "--";
+  const parsed = new Date(date);
+  return format(parsed, formatStr);
 }
