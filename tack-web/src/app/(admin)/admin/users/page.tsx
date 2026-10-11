@@ -5,10 +5,10 @@ import { UserCheck, UserPlus, Users, UserStar } from "lucide-react";
 import { ButtonGroup, DataTable, Statistics } from "@/components/shared";
 import { userColumns } from "@/config/columns/user";
 import { useValues } from "@/hooks/use-values";
-import { PERIOOS } from "@/config/params";
+import { PERIODS } from "@/config/params";
 
 const Page = () => {
-  const { onValueChange, values } = useValues({ period: PERIOOS[0].value });
+  const { onValueChange, values } = useValues({ period: PERIODS[0].value });
 
   return (
     <div className="space-y-6 overflow-y-auto">
@@ -39,7 +39,7 @@ const Page = () => {
       <div className="flex w-full items-center justify-end">
         <ButtonGroup
           onValueChange={(value) => onValueChange("period", value)}
-          options={PERIOOS}
+          options={PERIODS}
           value={values.period}
         />
       </div>
