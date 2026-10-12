@@ -2,6 +2,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   LayoutGrid,
+  Radio,
   Settings,
   Users,
   type LucideIcon,
@@ -23,6 +24,7 @@ export const ROUTES: RouteConfig[] = [
     name: "main",
     routes: [
       { label: "Overview", href: "/admin/overview", icon: LayoutDashboard },
+      { label: "Live", href: "/admin/live", icon: Radio },
       { label: "Users", href: "/admin/users", icon: Users },
       { label: "Boards", href: "/admin/boards", icon: LayoutGrid },
     ],
