@@ -6,7 +6,7 @@ import { TabProps } from "@/types/app";
 export const Security = ({ tab }: TabProps) => {
   return (
     <TabPanel tab={tab} value="security">
-      <div>Security</div>
+      <div className="rounded bg-white p-4">Security</div>
     </TabPanel>
   );
 };

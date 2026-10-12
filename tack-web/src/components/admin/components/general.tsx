@@ -6,7 +6,7 @@ import { TabProps } from "@/types/app";
 export const General = ({ tab }: TabProps) => {
   return (
     <TabPanel tab={tab} value="general">
-      <div>General</div>
+      <div className="rounded bg-white p-4">Platform</div>
     </TabPanel>
   );
 };

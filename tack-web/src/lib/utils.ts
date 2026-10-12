@@ -44,3 +44,57 @@ export function formatDate(date?: Date | string, formatStr = "dd/MM/yy") {
   const parsed = new Date(date);
   return format(parsed, formatStr);
 }
+
+export function normalizePathname(pathname?: string) {
+  if (!pathname) return "";
+  if (!pathname) return "";
+  const qIndex = pathname.indexOf("?");
+  const hIndex = pathname.indexOf("#");
+  const end =
+    qIndex === -1
+      ? hIndex === -1
+        ? pathname.length
+        : hIndex
+      : hIndex === -1
+        ? qIndex
+        : Math.min(qIndex, hIndex);
+  const cleanPath = pathname.slice(0, end);
+  if (cleanPath.length <= 3) return cleanPath;
+
+  let firstPart = "";
+  let secondPart = "";
+  let partCount = 0;
+  const start = cleanPath.startsWith("/") ? 1 : 0;
+
+  for (let i = start; i < cleanPath.length; i++) {
+    if (cleanPath[i] === "/") {
+      if (partCount === 0 && firstPart) {
+        partCount++;
+        continue;
+      }
+      if (partCount === 1 && secondPart) {
+        break;
+      }
+      continue;
+    }
+
+    if (partCount === 0) {
+      firstPart += cleanPath[i];
+    } else if (partCount === 1) {
+      secondPart += cleanPath[i];
+    }
+  }
+
+  if (!firstPart) return "";
+  if (!secondPart) return `/${firstPart}`;
+  return `/${firstPart}/${secondPart}`;
+}
+
+export function removeNullorUndefined(params: Record<string, unknown>) {
+  const filtered = Object.fromEntries(
+    Object.entries(params).filter(
+      ([, v]) => v !== null && v !== undefined && v !== "" && v !== "all",
+    ),
+  );
+  return filtered;
+}

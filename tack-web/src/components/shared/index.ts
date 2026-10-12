@@ -6,4 +6,5 @@ export * from "./pagination";
 export * from "./settings";
 export * from "./sidebar";
 export * from "./statistics";
+export * from "./tab-list";
 export * from "./tab-panel";
