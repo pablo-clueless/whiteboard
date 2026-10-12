@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { cn } from "cn";
 
+import { TabList } from "@/components/shared";
 import { Option, TabProps } from "@/types/app";
 import {
   BoardConfiguration,
@@ -18,7 +18,7 @@ type ExtendOption = Option & {
 
 const TABS: ExtendOption[] = [
   {
-    label: "General",
+    label: "Platform",
     value: "general",
     description: "Application name, logo, and basic configuration.",
     component: General,
@@ -54,20 +54,7 @@ const Page = () => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-primary/10 flex items-center rounded-md p-1">
-        {TABS.map(({ label, value }) => (
-          <button
-            className={cn(
-              "flex flex-1 items-center justify-center py-2 text-sm font-medium",
-              tab === value ? "text-primary rounded-md bg-white" : "",
-            )}
-            key={value}
-            onClick={() => setTab(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <TabList onValueChange={setTab} options={TABS} value={tab} />
       {TABS.map(({ component: Component, value }) => (
         <Component key={value} tab={tab} />
       ))}
