@@ -1,7 +1,7 @@
 "use client";
 
 import { type MouseEvent, type KeyboardEvent, useState } from "react";
-import { ListFilter, SearchX } from "lucide-react";
+import { ListFilter } from "lucide-react";
 import { cn } from "cn";
 import {
   columnFilteringFeature,
@@ -265,7 +265,6 @@ export const DataTable = <TData extends RowData>({
                       empty?.description ??
                       "Nothing here matches the current filters. Try clearing them or searching for something broader."
                     }
-                    icon={empty?.icon ?? SearchX}
                   />
                 </TableCell>
               </TableRow>
