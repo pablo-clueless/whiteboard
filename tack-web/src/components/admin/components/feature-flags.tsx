@@ -6,7 +6,7 @@ import { TabProps } from "@/types/app";
 export const FeatureFlags = ({ tab }: TabProps) => {
   return (
     <TabPanel tab={tab} value="feature-flags">
-      <div>Feature Flags</div>
+      <div className="rounded bg-white p-4">Feature Flags</div>
     </TabPanel>
   );
 };
