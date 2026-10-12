@@ -1,15 +1,16 @@
 "use client";
 
+import { Activity, Flag, MonitorCog, Presentation, ShieldKeyhole } from "lucide-react";
 import React, { useState } from "react";
 
-import { TabList } from "@/components/shared";
 import { Option, TabProps } from "@/types/app";
+import { TabList } from "@/components/shared";
 import {
   BoardConfiguration,
   FeatureFlags,
   General,
-  Notifications,
   Security,
+  SystemHealth,
 } from "@/components/admin/components";
 
 type ExtendOption = Option & {
@@ -22,30 +23,35 @@ const TABS: ExtendOption[] = [
     value: "general",
     description: "Application name, logo, and basic configuration.",
     component: General,
+    icon: MonitorCog,
   },
   {
     label: "Security",
     value: "security",
     description: "Password policies, two-factor authentication, and session settings.",
     component: Security,
+    icon: ShieldKeyhole,
   },
   {
     label: "Board Configuration",
     value: "board-configuration",
     description: "Board configuration settings.",
     component: BoardConfiguration,
+    icon: Presentation,
   },
   {
     label: "Feature Flags",
     value: "feature-flags",
     description: "Feature flags settings.",
     component: FeatureFlags,
+    icon: Flag,
   },
   {
-    label: "Notifications",
-    value: "notifications",
-    description: "Email and in-app notification preferences.",
-    component: Notifications,
+    label: "System Health",
+    value: "system-health",
+    description: "System health metrics.",
+    component: SystemHealth,
+    icon: Activity,
   },
 ];
 
