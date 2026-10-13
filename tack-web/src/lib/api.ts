@@ -1,10 +1,19 @@
+import { sessionToken } from "@/stores/user";
 import { env } from "./env";
 
 // TODO: generate these from the Rust types with ts-rs (src/types/server/).
 export type Role = "edit" | "view";
 
 export type ShareLinks = { boardId: string; editToken: string; viewToken: string };
-export type BoardInfo = { boardId: string; title: string; schemaVersion: number; role: Role };
+export type BoardInfo = {
+  boardId: string;
+  title: string;
+  schemaVersion: number;
+  role: Role;
+  archived: boolean;
+  /** Locked read-only by an editor. */
+  locked: boolean;
+};
 
 export class ApiError extends Error {
   constructor(
@@ -37,6 +46,7 @@ async function request<T>(
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new ApiError(res.status, data?.error ?? res.statusText);
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -47,12 +57,18 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const assetUrl = (assetId: string) => `${env.apiUrl}/api/assets/${assetId}`;
 
 export const api = {
-  createBoard: () => request<ShareLinks>("/api/boards", { method: "POST" }),
+  /** Signed in, the new board is owned by the account. */
+  createBoard: () =>
+    request<ShareLinks>("/api/boards", { method: "POST", token: sessionToken() ?? undefined }),
   getBoard: (boardId: string, token: string) =>
     request<BoardInfo>(`/api/boards/${boardId}`, { token }),
   /** Replaces both links; everyone using the old ones is disconnected. Edit links only. */
   resetLinks: (boardId: string, token: string) =>
     request<ShareLinks>(`/api/boards/${boardId}/tokens`, { method: "POST", token }),
+  /** The read-only switch: nobody can edit a locked board until an editor unlocks it. Edit links
+   * only, and only while the admin setting allows it. */
+  setBoardLocked: (boardId: string, token: string, locked: boolean) =>
+    request<void>(`/api/boards/${boardId}/lock`, { method: "PUT", token, body: { locked } }),
   /** Uploads an image for a board. The id is the image's content hash. Edit links only. */
   uploadAsset: async (boardId: string, token: string, file: Blob) => {
     let res: Response;

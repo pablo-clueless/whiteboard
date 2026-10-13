@@ -1,8 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use axum::{
     extract::{
-        Path, Query, State, WebSocketUpgrade,
+        ConnectInfo, Path, Query, State, WebSocketUpgrade,
         ws::{CloseFrame, Message, WebSocket},
     },
     http::{HeaderMap, StatusCode, header},
@@ -11,14 +14,17 @@ use axum::{
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
     AppState,
+    accounts::{self, User},
     auth::hash_token,
     db,
-    room::{ConnId, OUTGOING_QUEUE, Role},
+    request_meta::RequestMeta,
+    room::{ClientInfo, ConnId, OUTGOING_QUEUE, Role},
 };
 
 /// Max size of one incoming WebSocket message.
@@ -34,10 +40,14 @@ const RATE_BURST: f64 = 400.0;
 const CLOSE_INVALID_LINK: u16 = 4403;
 const CLOSE_NO_BOARD: u16 = 4404;
 const CLOSE_SERVER_ERROR: u16 = 1011;
+/// "Try again later": y-websocket keeps retrying, so clients come back after maintenance.
+const CLOSE_TRY_LATER: u16 = 1013;
 
 #[derive(Deserialize)]
 pub struct WsParams {
     token: Option<String>,
+    /// A signed-in user's session token, so the connection is attributed to them. Optional.
+    session: Option<String>,
 }
 
 pub async fn upgrade(
@@ -45,24 +55,77 @@ pub async fn upgrade(
     Path(board_id): Path<Uuid>,
     Query(params): Query<WsParams>,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> Response {
     // Reject cross-site WebSocket hijacking: browsers always send Origin on upgrades.
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
-    if !origin.is_some_and(|o| state.config.is_origin_allowed(o)) {
+    if !origin.is_some_and(|o| state.settings.is_origin_allowed(o)) {
         tracing::warn!(?origin, %board_id, "rejected websocket: origin not allowed");
         return StatusCode::FORBIDDEN.into_response();
     }
+    let meta = RequestMeta::from_parts(&headers, Some(peer), state.config.trust_proxy);
+
+    // A bad session doesn't stop anyone joining with a valid link; it just isn't attributed.
+    let user = match params.session.as_deref() {
+        Some(session) => {
+            let timeout = state.settings.read(|s| s.security.session_timeout);
+            accounts::user_for_session(&state.pool, session, timeout).await.ok().flatten().map(|(_, u)| u)
+        }
+        None => None,
+    };
 
     // An HTTP error here would make the client retry forever. Upgrade, then close with a code
     // it treats as permanent.
-    let access = resolve(&state, board_id, params.token.as_deref()).await;
+    let maintenance =
+        state.settings.read(|s| s.platform.maintenance_mode) && !user.as_ref().is_some_and(User::is_admin);
+    let access = if maintenance {
+        Err((CLOSE_TRY_LATER, "Tack is down for maintenance"))
+    } else {
+        resolve(&state, board_id, params.token.as_deref()).await
+    };
     ws.max_message_size(MAX_MESSAGE_BYTES).on_upgrade(move |socket| async move {
         match access {
-            Ok(role) => handle_socket(socket, state, board_id, role).await,
+            Ok(role) => handle_socket(socket, state, board_id, role, user, meta).await,
             Err((code, reason)) => close(socket, code, reason).await,
         }
     })
+}
+
+/// Records a connection for analytics. Returns its row id, or None if the write failed.
+async fn record_connection(
+    state: &AppState,
+    board_id: Uuid,
+    role: Role,
+    user: Option<&User>,
+    meta: &RequestMeta,
+) -> Option<i64> {
+    let mut hasher = Sha256::new();
+    hasher.update(state.settings.salt());
+    match user {
+        Some(user) => hasher.update(format!("u:{}", user.id)),
+        None => hasher.update(format!("a:{}\n{}", meta.ip.as_deref().unwrap_or_default(), meta.user_agent)),
+    }
+    let visitor_id: [u8; 32] = hasher.finalize().into();
+    let result = sqlx::query_scalar(
+        "INSERT INTO connections (board_id, user_id, visitor_id, role, browser, device)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+    )
+    .bind(board_id)
+    .bind(user.map(|u| u.id))
+    .bind(visitor_id.as_slice())
+    .bind(role.as_str())
+    .bind(meta.browser.as_str())
+    .bind(meta.device.as_str())
+    .fetch_one(&state.pool)
+    .await;
+    if let Some(user) = user {
+        let _ = sqlx::query("UPDATE users SET last_seen_at = now() WHERE id = $1")
+            .bind(user.id)
+            .execute(&state.pool)
+            .await;
+    }
+    result.inspect_err(|err| tracing::warn!(%board_id, %err, "failed to record connection")).ok()
 }
 
 /// The role the token grants, or the close code and reason to send instead.
@@ -102,15 +165,30 @@ async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
     .await;
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState, board_id: Uuid, role: Role) {
+async fn handle_socket(
+    socket: WebSocket,
+    state: AppState,
+    board_id: Uuid,
+    role: Role,
+    user: Option<User>,
+    meta: RequestMeta,
+) {
     let conn = ConnId::new();
     let (out_tx, mut out_rx) = mpsc::channel::<Bytes>(OUTGOING_QUEUE);
 
-    let Some(room) = state.rooms.join(board_id, conn, role, out_tx).await else {
+    let info = ClientInfo {
+        user_id: user.as_ref().map(|u| u.id),
+        user_name: user.as_ref().map(|u| u.name.clone()),
+        browser: meta.browser.as_str(),
+        device: meta.device.as_str(),
+        connected_at: chrono::Utc::now(),
+    };
+    let Some(room) = state.rooms.join(board_id, conn, role, info, out_tx).await else {
         tracing::error!(%board_id, "failed to join room");
         return close(socket, CLOSE_SERVER_ERROR, "Server error").await;
     };
     tracing::debug!(%board_id, %conn, ?role, "client connected");
+    let record = record_connection(&state, board_id, role, user.as_ref(), &meta).await;
 
     let (mut sink, mut stream) = socket.split();
 
@@ -158,5 +236,11 @@ async fn handle_socket(socket: WebSocket, state: AppState, board_id: Uuid, role:
     }
 
     room.leave(conn).await;
+    if let Some(id) = record {
+        let _ = sqlx::query("UPDATE connections SET ended_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&state.pool)
+            .await;
+    }
     tracing::debug!(%board_id, %conn, "client disconnected");
 }

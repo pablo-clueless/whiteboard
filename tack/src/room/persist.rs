@@ -20,8 +20,8 @@ const FLUSH_BATCH: usize = 100;
 
 enum PersistMsg {
     Update(Vec<u8>),
-    /// Full encoded doc state, covering every update sent before it.
-    Snapshot(Vec<u8>),
+    /// Full encoded doc state, covering every update sent before it, and the board's title.
+    Snapshot(Vec<u8>, Option<String>),
 }
 
 pub(super) struct Persister {
@@ -40,8 +40,8 @@ impl Persister {
         let _ = self.tx.send(PersistMsg::Update(update));
     }
 
-    pub fn snapshot(&self, state: Vec<u8>) {
-        let _ = self.tx.send(PersistMsg::Snapshot(state));
+    pub fn snapshot(&self, state: Vec<u8>, title: Option<String>) {
+        let _ = self.tx.send(PersistMsg::Snapshot(state, title));
     }
 
     /// Writes everything still buffered and waits until it's done.
@@ -65,9 +65,14 @@ async fn run(pool: PgPool, board_id: BoardId, mut rx: mpsc::UnboundedReceiver<Pe
                         flush(&pool, board_id, &mut buffer).await;
                     }
                 }
-                Some(PersistMsg::Snapshot(state)) => {
+                Some(PersistMsg::Snapshot(state, title)) => {
                     flush(&pool, board_id, &mut buffer).await;
                     compact(&pool, board_id, &state).await;
+                    if let Some(title) = title
+                        && let Err(err) = db::set_title(&pool, board_id, &title).await
+                    {
+                        tracing::warn!(%board_id, %err, "failed to save title");
+                    }
                 }
                 None => {
                     flush(&pool, board_id, &mut buffer).await;
@@ -89,7 +94,9 @@ async fn flush(pool: &PgPool, board_id: BoardId, buffer: &mut Vec<Vec<u8>>) {
     }
     match db::append_updates(pool, board_id, buffer).await {
         Ok(_) => buffer.clear(),
-        Err(err) => tracing::error!(%board_id, %err, pending = buffer.len(), "failed to save updates"),
+        Err(err) => {
+            tracing::error!(%board_id, %err, pending = buffer.len(), "failed to save updates")
+        }
     }
 }
 
@@ -146,7 +153,7 @@ mod tests {
         let id = Uuid::new_v4();
         let (_, edit) = crate::auth::new_token();
         let (_, view) = crate::auth::new_token();
-        db::create_board(pool, id, &edit, &view).await.unwrap();
+        db::create_board(pool, id, None, &edit, &view).await.unwrap();
         id
     }
 
@@ -255,7 +262,7 @@ mod tests {
         let persister = Persister::spawn(pool.clone(), board);
         shapes.insert(&mut doc.transact_mut(), "s5", 5i64);
         persister.update(updates.lock().unwrap().last().unwrap().clone());
-        persister.snapshot(doc.transact().encode_state_as_update_v1(&StateVector::default()));
+        persister.snapshot(doc.transact().encode_state_as_update_v1(&StateVector::default()), None);
         persister.close().await;
         let (loaded, stored) = reload(&pool, board).await;
         assert!(stored.snapshot.is_some());
