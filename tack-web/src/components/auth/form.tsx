@@ -1,7 +1,7 @@
 "use client";
 
 import { type ComponentProps, type ReactNode, useId, useState } from "react";
-import { Eye, EyeOff, Info } from "lucide-react";
+import { CircleAlert, CircleCheck, Eye, EyeOff, Info } from "lucide-react";
 import Link from "next/link";
 import { cn } from "cn";
 
@@ -125,7 +125,35 @@ export function GoogleButton({ children, onClick }: { children: ReactNode; onCli
   );
 }
 
-/** Shown after submit while accounts aren't switched on. TODO: remove once the auth API exists. */
+/** The result of a submit: what went wrong, or what happens next. */
+export function FormMessage({
+  tone,
+  children,
+}: {
+  tone: "error" | "success";
+  children: ReactNode;
+}) {
+  const Icon = tone === "error" ? CircleAlert : CircleCheck;
+  return (
+    <p
+      role={tone === "error" ? "alert" : "status"}
+      className={cn(
+        "text-ink/75 mt-4 flex gap-2 rounded-xl border px-3.5 py-3 text-[13px] leading-relaxed",
+        tone === "error" ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50",
+      )}
+    >
+      <Icon
+        className={cn(
+          "mt-px size-4 shrink-0",
+          tone === "error" ? "text-red-500" : "text-green-600",
+        )}
+      />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/** For sign-in methods that aren't available (Google). */
 export function NotAvailable({ children }: { children?: ReactNode }) {
   return (
     <p

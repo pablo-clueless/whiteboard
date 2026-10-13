@@ -1,13 +1,20 @@
-import axios, { AxiosError, AxiosRequestConfig } from "axios";
+import axios, { AxiosError } from "axios";
 
-const baseURL = process.env.NEXT_PUBLIC_TACK_API_URL;
+import { sessionToken, useUserStore } from "@/stores/user";
+import { env } from "./env";
 
-type ExtendAxiosRequestConfig = AxiosRequestConfig & {
-  _maxRetries: number;
-  _retry: boolean;
-};
+/** What every failed request rejects with. `status` 0 means the server couldn't be reached. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly data?: unknown,
+  ) {
+    super(message);
+  }
+}
 
-async function resolveError(data: unknown): Promise<unknown> {
+async function resolveData(data: unknown): Promise<unknown> {
   if (!(data instanceof Blob)) return data;
   try {
     const text = await data.text();
@@ -17,51 +24,55 @@ async function resolveError(data: unknown): Promise<unknown> {
   }
 }
 
-function extractApiMessage(error: unknown): string | undefined {
-  if (typeof error === "string" && error.trim()) return error;
-  if (!error || typeof error !== "object") return undefined;
-  if (error instanceof Error) return error.message;
+/** The server answers errors with `{ error: "…" }`. */
+function messageOf(data: unknown): string | undefined {
+  if (typeof data === "string" && data.trim()) return data;
+  if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+    return data.error;
+  }
   return undefined;
 }
 
-const client = axios.create({
-  baseURL,
-  timeout: 10000,
-});
+/** The form field a 400 is about (`{ error, field }`), so the message can sit beside it. */
+export function fieldOf(error: unknown): string | undefined {
+  const data = error instanceof HttpError ? error.data : undefined;
+  return data && typeof data === "object" && "field" in data && typeof data.field === "string"
+    ? data.field
+    : undefined;
+}
+
+/** The server's stable code for an error, like `two_factor_required`. */
+export function codeOf(error: unknown): string | undefined {
+  const data = error instanceof HttpError ? error.data : undefined;
+  return data && typeof data === "object" && "code" in data && typeof data.code === "string"
+    ? data.code
+    : undefined;
+}
+
+const client = axios.create({ baseURL: env.apiUrl, timeout: 15000 });
 
 client.interceptors.request.use((config) => {
-  config.headers.Authorization = `Bearer`;
+  const token = sessionToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
 client.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    const request = error.config as ExtendAxiosRequestConfig;
-    const status = error.response?.status;
-    const err = await resolveError(error.response?.data);
-    const message = extractApiMessage(err) ?? error.message ?? "An unexpected error occurred.";
+    const status = error.response?.status ?? 0;
+    const data = await resolveData(error.response?.data);
+    const message =
+      messageOf(data) ??
+      (status === 0 ? "Can't reach the Tack server" : error.message) ??
+      "An unexpected error occurred.";
 
-    if (status === 401 && request.url !== "/auth/signin") {
-      return Promise.reject({ data: err, message, status });
+    // The session ended (expired, revoked, or the account was suspended): forget it, and the
+    // auth gate sends the user to sign in.
+    if (status === 401 && sessionToken() && !error.config?.url?.startsWith("/api/auth/signin")) {
+      useUserStore.getState().signout();
     }
-
-    if (request._retry && request._maxRetries > 0) {
-      // get new token, check if we are authenticated and retry request
-
-      try {
-        return client(request);
-      } catch {
-        return Promise.reject({
-          data: err,
-          message: "Session expired, please login again.",
-          status,
-        });
-      }
-    }
-    request._retry = true;
-
-    return Promise.reject(error);
+    return Promise.reject(new HttpError(status, message, data));
   },
 );
 
@@ -74,5 +85,6 @@ export const http = {
     client.patch<T>(url, data).then((response) => response.data),
   put: <T>(url: string, data?: unknown) =>
     client.put<T>(url, data).then((response) => response.data),
-  delete: <T>(url: string) => client.delete<T>(url).then((response) => response.data),
+  delete: <T>(url: string, params?: Record<string, unknown>) =>
+    client.delete<T>(url, { params }).then((response) => response.data),
 };

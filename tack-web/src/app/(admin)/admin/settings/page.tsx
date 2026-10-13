@@ -1,10 +1,13 @@
 "use client";
 
 import { Activity, Flag, MonitorCog, Presentation, ShieldKeyhole } from "lucide-react";
-import React, { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { Suspense, useEffect } from "react";
 
 import { Option, TabProps } from "@/types/app";
 import { TabList } from "@/components/shared";
+import { useConfirm } from "@/components/admin";
+import { useSettingsDirty } from "@/components/admin/components/use-settings";
 import {
   BoardConfiguration,
   FeatureFlags,
@@ -55,8 +58,36 @@ const TABS: ExtendOption[] = [
   },
 ];
 
-const Page = () => {
-  const [tab, setTab] = useState(TABS[0].value);
+const SettingsPage = () => {
+  const params = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const requested = params.get("tab");
+  const tab = TABS.find((t) => t.value === requested)?.value ?? TABS[0].value;
+  const dirty = useSettingsDirty((s) => Object.values(s.dirty).some(Boolean));
+  const { dialog, confirm } = useConfirm();
+
+  // Reloading or closing the tab with unsaved changes asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [dirty]);
+
+  const go = (value: string) => router.replace(`${pathname}?tab=${value}`, { scroll: false });
+  // Hidden tabs unmount, so switching would drop a draft without a word.
+  const setTab = (value: string) => {
+    if (value === tab) return;
+    if (!dirty) return go(value);
+    confirm({
+      title: "Discard unsaved changes?",
+      description: "Changes on this tab haven't been saved. Switching tabs throws them away.",
+      confirmLabel: "Discard",
+      destructive: true,
+      onConfirm: () => go(value),
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -64,8 +95,16 @@ const Page = () => {
       {TABS.map(({ component: Component, value }) => (
         <Component key={value} tab={tab} />
       ))}
+      {dialog}
     </div>
   );
 };
+
+/** useSearchParams needs a Suspense boundary. */
+const Page = () => (
+  <Suspense>
+    <SettingsPage />
+  </Suspense>
+);
 
 export default Page;

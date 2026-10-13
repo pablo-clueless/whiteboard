@@ -6,7 +6,9 @@ import type { WebsocketProvider } from "y-websocket";
 import type { PresenceState } from "../Presence";
 import {
   BOARD_FULL_EVENT,
+  BOARD_LOCKED_EVENT,
   type BoardFullEvents,
+  type BoardLockedEvents,
   type ConnectionStatus,
   connectBoard,
   createBoardDoc,
@@ -83,6 +85,32 @@ export function useOnBoardFull(provider: WebsocketProvider, onFull: () => void) 
     const events = provider as unknown as BoardFullEvents;
     events.on(BOARD_FULL_EVENT, handler);
     return () => events.off(BOARD_FULL_EVENT, handler);
+  }, [provider]);
+}
+
+/**
+ * Calls onChange with whether an editor has locked the board read-only. The server only says so
+ * when it's locked, so each (re)connect starts unlocked: a board unlocked while this client was
+ * away isn't stuck.
+ */
+export function useOnBoardLocked(provider: WebsocketProvider, onChange: (locked: boolean) => void) {
+  const latest = useRef(onChange);
+  useEffect(() => {
+    latest.current = onChange;
+  });
+  useEffect(() => {
+    const handler = (locked: boolean) => latest.current(locked);
+    // "connected" fires on open, before the server's first messages are read.
+    const onStatus = ({ status }: { status: ConnectionStatus }) => {
+      if (status === "connected") latest.current(false);
+    };
+    const events = provider as unknown as BoardLockedEvents;
+    events.on(BOARD_LOCKED_EVENT, handler);
+    provider.on("status", onStatus);
+    return () => {
+      events.off(BOARD_LOCKED_EVENT, handler);
+      provider.off("status", onStatus);
+    };
   }, [provider]);
 }
 

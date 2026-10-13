@@ -6,6 +6,12 @@ use uuid::Uuid;
 
 use crate::auth::{Role, TokenHash};
 
+/// Marks SQL built with `format!` as checked. Only constants and whitelisted names (column lists,
+/// sort columns, ASC/DESC) may be spliced in; user input always goes through bind parameters.
+pub fn audited(sql: String) -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(sql)
+}
+
 pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
     let pool = PgPoolOptions::new().max_connections(10).connect(url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
@@ -15,11 +21,16 @@ pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
 pub async fn create_board(
     pool: &PgPool,
     id: Uuid,
+    owner_id: Option<Uuid>,
     edit: &TokenHash,
     view: &TokenHash,
 ) -> sqlx::Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO boards (id) VALUES ($1)").bind(id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO boards (id, owner_id) VALUES ($1, $2)")
+        .bind(id)
+        .bind(owner_id)
+        .execute(&mut *tx)
+        .await?;
     insert_tokens(&mut tx, id, edit, view).await?;
     tx.commit().await
 }
@@ -68,25 +79,30 @@ pub async fn rotate_tokens(
     tx.commit().await
 }
 
-/// The role a token grants on a board, or None if it doesn't grant any.
+/// The role a token grants on a board, or None if it doesn't grant any. An archived board only
+/// grants view, whatever the link.
 pub async fn token_role(pool: &PgPool, board_id: Uuid, hash: &TokenHash) -> sqlx::Result<Option<Role>> {
-    let role: Option<String> =
-        sqlx::query_scalar("SELECT role FROM share_tokens WHERE token_hash = $1 AND board_id = $2")
-            .bind(hash.as_slice())
-            .bind(board_id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(role.and_then(|r| Role::parse(&r)))
+    let row: Option<(String, bool)> = sqlx::query_as(
+        "SELECT t.role, b.archived_at IS NOT NULL FROM share_tokens t JOIN boards b ON b.id = t.board_id
+         WHERE t.token_hash = $1 AND t.board_id = $2",
+    )
+    .bind(hash.as_slice())
+    .bind(board_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(role, archived)| if archived { Some(Role::View) } else { Role::parse(&role) }))
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct BoardRow {
     pub title: String,
     pub schema_version: i32,
+    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub locked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub async fn board(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<BoardRow>> {
-    sqlx::query_as("SELECT title, schema_version FROM boards WHERE id = $1")
+    sqlx::query_as("SELECT title, schema_version, archived_at, locked_at FROM boards WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -95,16 +111,19 @@ pub async fn board(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<BoardRow>> {
 /// The latest snapshot (if any) plus every update after it, in order.
 pub struct StoredDoc {
     pub snapshot: Option<Vec<u8>>,
+    pub snapshot_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updates: Vec<Vec<u8>>,
+    /// Locked read-only by an editor.
+    pub locked: bool,
 }
 
 pub async fn load_doc(pool: &PgPool, board_id: Uuid) -> sqlx::Result<StoredDoc> {
-    let snapshot: Option<(Vec<u8>, i64)> =
-        sqlx::query_as("SELECT state, upto_seq FROM board_snapshots WHERE board_id = $1")
+    let snapshot: Option<(Vec<u8>, i64, chrono::DateTime<chrono::Utc>)> =
+        sqlx::query_as("SELECT state, upto_seq, created_at FROM board_snapshots WHERE board_id = $1")
             .bind(board_id)
             .fetch_optional(pool)
             .await?;
-    let after = snapshot.as_ref().map_or(0, |(_, seq)| *seq);
+    let after = snapshot.as_ref().map_or(0, |(_, seq, _)| *seq);
     let updates: Vec<Vec<u8>> = sqlx::query_scalar(
         "SELECT update FROM board_updates WHERE board_id = $1 AND seq > $2 ORDER BY seq",
     )
@@ -112,7 +131,17 @@ pub async fn load_doc(pool: &PgPool, board_id: Uuid) -> sqlx::Result<StoredDoc> 
     .bind(after)
     .fetch_all(pool)
     .await?;
-    Ok(StoredDoc { snapshot: snapshot.map(|(state, _)| state), updates })
+    let snapshot_at = snapshot.as_ref().map(|(_, _, at)| *at);
+    let locked: Option<bool> = sqlx::query_scalar("SELECT locked_at IS NOT NULL FROM boards WHERE id = $1")
+        .bind(board_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(StoredDoc {
+        snapshot: snapshot.map(|(state, _, _)| state),
+        snapshot_at,
+        updates,
+        locked: locked.unwrap_or(false),
+    })
 }
 
 /// Appends updates in one transaction. Returns the highest seq written.
@@ -127,10 +156,7 @@ pub async fn append_updates(pool: &PgPool, board_id: Uuid, updates: &[Vec<u8>]) 
     .bind(updates)
     .fetch_all(pool)
     .await?;
-    sqlx::query("UPDATE boards SET updated_at = now() WHERE id = $1")
-        .bind(board_id)
-        .execute(pool)
-        .await?;
+    sqlx::query("UPDATE boards SET updated_at = now() WHERE id = $1").bind(board_id).execute(pool).await?;
     Ok(seqs.into_iter().max())
 }
 
@@ -154,6 +180,29 @@ pub async fn compact(pool: &PgPool, board_id: Uuid, state: &[u8], upto_seq: i64)
         .rows_affected();
     tx.commit().await?;
     Ok(deleted)
+}
+
+/// Copies the title from the doc (`meta.title`) to the boards table, for listing boards without
+/// loading them.
+pub async fn set_title(pool: &PgPool, board_id: Uuid, title: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE boards SET title = $2 WHERE id = $1 AND title IS DISTINCT FROM $2")
+        .bind(board_id)
+        .bind(title)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Locks or unlocks a board. Returns false if there's no such board.
+pub async fn set_locked(pool: &PgPool, board_id: Uuid, locked: bool) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE boards SET locked_at = CASE WHEN $2 THEN COALESCE(locked_at, now()) END WHERE id = $1",
+    )
+    .bind(board_id)
+    .bind(locked)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Highest update seq stored for a board, or 0.

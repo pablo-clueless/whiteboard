@@ -37,6 +37,8 @@ type EditorState = {
   shortcutsOpen: boolean;
   /** The server says the board is at its size limit: edits made now wouldn't be kept. */
   boardFull: boolean;
+  /** An editor locked the board with the read-only switch: nobody edits until it's unlocked. */
+  boardLocked: boolean;
   /** The "diagram from code" dialog. */
   importOpen: boolean;
   libraryDialog: LibraryDialog | null;
@@ -59,6 +61,7 @@ type EditorState = {
   setShortcutsOpen: (open: boolean) => void;
   setImportOpen: (open: boolean) => void;
   setBoardFull: (full: boolean) => void;
+  setBoardLocked: (locked: boolean) => void;
   setLibraryDialog: (dialog: LibraryDialog | null) => void;
 };
 
@@ -84,6 +87,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
   outdated: false,
   shortcutsOpen: false,
   boardFull: false,
+  boardLocked: false,
   importOpen: false,
   libraryDialog: null,
   setTool: (toolId) => set({ toolId }),
@@ -109,6 +113,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   setImportOpen: (importOpen) => set({ importOpen }),
   setBoardFull: (boardFull) => set({ boardFull }),
+  setBoardLocked: (boardLocked) => set({ boardLocked }),
   setLibraryDialog: (libraryDialog) => set({ libraryDialog }),
   setConnect: (connect) =>
     set((s) =>
