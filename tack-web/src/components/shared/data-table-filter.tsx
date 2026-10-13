@@ -117,18 +117,18 @@ export const DataTableFilter = <TData extends RowData>({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {filters.map((filter) => (
         <div className="space-y-1.5" key={filter.key}>
           <p className="text-xs">{filter.label}</p>
           {render(filter)}
-          {hasFilters && (
-            <Button onClick={handleClearFilters} size="sm" variant="destructive">
-              Clear Filters
-            </Button>
-          )}
         </div>
       ))}
+      {hasFilters && (
+        <Button onClick={handleClearFilters} size="sm" variant="destructive">
+          Clear Filters
+        </Button>
+      )}
     </div>
   );
 };

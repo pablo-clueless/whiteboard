@@ -1,18 +1,26 @@
+// Matches `SystemConfiguration` from GET /api/admin/settings (`tack/src/settings.rs`).
+
 export interface PlatformProps {
   allowedOrigins: string[];
+  /** Seconds an empty room stays open. */
   idleTimeout: number;
   maintenanceMode: boolean;
+  /** Largest board, in MB. */
   sizeLimit: number;
 }
+
+export type PasswordPolicy = "basic" | "strong";
 
 export interface SecurityProps {
   allowNewUsers: boolean;
   maxLoginAttempts: number;
-  passwordPolicy: string;
+  passwordPolicy: PasswordPolicy;
   retentionPolicy: {
     automaticDeletion: boolean;
+    /** Days. */
     retentionPeriod: number;
   };
+  /** Minutes. */
   sessionTimeout: number;
   twoFactorAuthentication: boolean;
 }
@@ -29,7 +37,7 @@ export interface FeatureFlagsProps {
     id: string;
     name: string;
     enabled: boolean;
-    description?: string;
+    description?: string | null;
   }[];
 }
 
@@ -46,4 +54,15 @@ export interface SystemConfiguration {
   board: BoardProps;
   featureFlags: FeatureFlagsProps;
   systemHealth: SystemHealthProps;
+}
+
+/** GET /api/config: what the web client needs to hide or disable features. */
+export interface PublicConfig {
+  maintenanceMode: boolean;
+  allowNewUsers: boolean;
+  passwordPolicy: PasswordPolicy;
+  /** Admins must use two-factor sign-in. */
+  twoFactorRequired: boolean;
+  board: BoardProps;
+  featureFlags: Record<string, boolean>;
 }

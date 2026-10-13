@@ -27,17 +27,19 @@ import type { BoardDoc } from "./sync/board-doc";
 import { ImportDialog } from "./ImportDialog";
 import { LabelEditor } from "./LabelEditor";
 import { ShareDialog } from "./ShareDialog";
+import { usePublicConfig } from "@/lib/public-config";
 import { api, type Role } from "@/lib/api";
 import { CanvasMenu } from "./CanvasMenu";
 import { ExportMenu } from "./ExportMenu";
 import { StylePanel } from "./StylePanel";
 import { TextEditor } from "./TextEditor";
-import { Code2 } from "lucide-react";
+import { Code2, Lock, LockOpen } from "lucide-react";
 import { Canvas } from "./Canvas";
 import {
   useBoard,
   useConnectionStatus,
   useOnBoardFull,
+  useOnBoardLocked,
   useOnPermanentClose,
   usePeerCount,
   usePeers,
@@ -97,13 +99,37 @@ function BoardEditor({
   useRememberedView(editor, boardId, provider);
   useMigrations(editor, board, provider, { viewOnly: role === "view" });
   useOnBoardFull(provider, () => editor.ui.setBoardFull(true));
-  // The flag lives in a store shared by every board this tab opens.
-  useEffect(() => editor.ui.setBoardFull(false), [editor]);
-  // Read-only can switch on mid-session (a newer Tack edits the board, or it fills up);
-  // re-render when it does.
+  useOnBoardLocked(provider, (locked) => editor.ui.setBoardLocked(locked));
+  // The flags live in a store shared by every board this tab opens.
+  useEffect(() => {
+    editor.ui.setBoardFull(false);
+    editor.ui.setBoardLocked(false);
+  }, [editor]);
+  // Read-only can switch on mid-session (a newer Tack edits the board, it fills up, or an editor
+  // locks it); re-render when it does.
   const outdated = useEditorStore((s) => s.outdated);
   const full = useEditorStore((s) => s.boardFull);
-  const locked = outdated ? "outdated" : full ? "full" : null;
+  const boardLocked = useEditorStore((s) => s.boardLocked);
+  const locked = outdated ? "outdated" : full ? "full" : boardLocked ? "locked" : null;
+  const config = usePublicConfig();
+  // On until the server says otherwise, so a slow config request doesn't hide anything.
+  const canImport = config?.board.diagramImport ?? true;
+  // Off until the server says it's allowed, since the server refuses it otherwise.
+  const canLock = role === "edit" && (config?.board.readOnlySwitch ?? false);
+  const [lockPending, setLockPending] = useState(false);
+  const setBoardLock = async (lock: boolean) => {
+    setLockPending(true);
+    try {
+      await api.setBoardLocked(boardId, token, lock);
+      // The server tells everyone, this tab included; set it now so the button doesn't lag.
+      editor.ui.setBoardLocked(lock);
+      toast(lock ? "Board locked. Nobody can edit it until an editor unlocks it." : "Board unlocked");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't change the lock");
+    } finally {
+      setLockPending(false);
+    }
+  };
   useEffect(() => {
     if (locked) editor.setTool("select");
   }, [editor, locked]);
@@ -154,8 +180,8 @@ function BoardEditor({
         e.preventDefault();
         return;
       }
-      // DBML or Mermaid becomes a diagram.
-      const diagram = text ? detectDiagram(text) : null;
+      // DBML or Mermaid becomes a diagram, unless an admin turned diagram import off.
+      const diagram = text && canImport ? detectDiagram(text) : null;
       if (diagram) {
         e.preventDefault();
         if (diagram.kind === "unsupported") {
@@ -182,7 +208,7 @@ function BoardEditor({
       window.removeEventListener("cut", cut);
       window.removeEventListener("paste", onPaste);
     };
-  }, [editor]);
+  }, [editor, canImport]);
 
   // Drop image files, or components and saved shapes dragged from the panel, where released.
   const onDragOver = (e: React.DragEvent) => {
@@ -240,7 +266,7 @@ function BoardEditor({
           </span>
         )}
         <StatusBadge provider={provider} />
-        {!editor.readOnly && (
+        {!editor.readOnly && canImport && (
           <button
             type="button"
             title="Diagram from code (DBML, Mermaid)"
@@ -249,6 +275,18 @@ function BoardEditor({
           >
             <Code2 className="size-3.5" />
             From code
+          </button>
+        )}
+        {canLock && !editor.readOnly && (
+          <button
+            type="button"
+            title="Lock the board so nobody can edit it until an editor unlocks it"
+            disabled={lockPending}
+            onClick={() => setBoardLock(true)}
+            className="text-ink focus-visible:ring-primary/40 pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border bg-white px-3 text-xs font-semibold shadow-sm outline-none hover:bg-[#f8f8f9] focus-visible:ring-3 disabled:opacity-60"
+          >
+            <Lock className="size-3.5" />
+            Lock
           </button>
         )}
         <ExportMenu editor={editor} />
@@ -260,7 +298,12 @@ function BoardEditor({
           onTokenChange={onTokenChange}
         />
       </div>
-      {locked && <LockedBanner reason={locked} />}
+      {locked && (
+        <LockedBanner
+          reason={locked}
+          onUnlock={canLock && !lockPending ? () => setBoardLock(false) : undefined}
+        />
+      )}
       <ShortcutsDialog editor={editor} />
       <ImportDialog editor={editor} />
       <LibraryDialogs editor={editor} />
@@ -273,27 +316,54 @@ function BoardEditor({
 /**
  * Why an editor can't edit right now: the board was saved by a newer Tack (refreshing loads the
  * newer version), or it's full (the server would drop new edits; refreshing drops any that
- * didn't save).
+ * didn't save), or an editor locked it (another editor can unlock it; `onUnlock` is set when
+ * this one can).
  */
-function LockedBanner({ reason }: { reason: "outdated" | "full" }) {
+function LockedBanner({
+  reason,
+  onUnlock,
+}: {
+  reason: "outdated" | "full" | "locked";
+  onUnlock?: () => void;
+}) {
+  const buttonClass =
+    "bg-primary focus-visible:ring-primary/40 flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3 font-semibold text-white outline-none hover:brightness-105 focus-visible:ring-3";
   return (
     <div
       role="status"
-      className="absolute top-3 left-1/2 flex max-w-[calc(100vw-24px)] -translate-x-1/2 items-center gap-3 rounded-full border bg-white py-1.5 pr-1.5 pl-4 text-xs shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]"
+      className={cn(
+        "absolute top-3 left-1/2 flex max-w-[calc(100vw-24px)] -translate-x-1/2 items-center gap-3 rounded-full border bg-white py-1.5 pl-4 text-xs shadow-[0_12px_30px_-18px_rgb(14_14_16/0.45)]",
+        reason === "locked" && !onUnlock ? "pr-4" : "pr-1.5",
+      )}
     >
       <span className="text-ink">
-        <strong className="font-semibold">Read-only.</strong>{" "}
-        {reason === "outdated"
-          ? "This board was saved by a newer version of Tack."
-          : "This board is full, so new changes can't be saved. Export it, or start a new board."}
+        {reason === "locked" ? (
+          <>
+            <Lock className="mr-1 inline size-3 -translate-y-px" />
+            <strong className="font-semibold">Locked.</strong> Nobody can edit this board until an
+            editor unlocks it.
+          </>
+        ) : (
+          <>
+            <strong className="font-semibold">Read-only.</strong>{" "}
+            {reason === "outdated"
+              ? "This board was saved by a newer version of Tack."
+              : "This board is full, so new changes can't be saved. Export it, or start a new board."}
+          </>
+        )}
       </span>
-      <button
-        type="button"
-        onClick={() => window.location.reload()}
-        className="bg-primary focus-visible:ring-primary/40 h-7 shrink-0 rounded-full px-3 font-semibold text-white outline-none hover:brightness-105 focus-visible:ring-3"
-      >
-        {reason === "outdated" ? "Refresh to update" : "Refresh"}
-      </button>
+      {reason === "locked" ? (
+        onUnlock && (
+          <button type="button" onClick={onUnlock} className={buttonClass}>
+            <LockOpen className="size-3.5" />
+            Unlock
+          </button>
+        )
+      ) : (
+        <button type="button" onClick={() => window.location.reload()} className={buttonClass}>
+          {reason === "outdated" ? "Refresh to update" : "Refresh"}
+        </button>
+      )}
     </div>
   );
 }
