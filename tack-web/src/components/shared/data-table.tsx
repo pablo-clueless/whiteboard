@@ -78,7 +78,12 @@ interface Props<TData extends RowData> {
   total: number;
   empty?: EmptyStateProps;
   filters?: FilterProps<TData>[];
+  /** Row ids for selection; defaults to the row index. */
+  getRowId?: (row: TData) => string;
+  /** Called with the new filters. The table doesn't filter rows itself: the server does. */
   onFilter?: (filters: ColumnFiltersState) => void;
+  /** Shown above the table while rows are selected, e.g. bulk actions. */
+  selectionActions?: React.ReactNode;
   onRowSelectionChange?: (selection: RowSelectionState) => void;
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
@@ -95,7 +100,10 @@ export const DataTable = <TData extends RowData>({
   data,
   total,
   empty,
+  filters = [],
+  getRowId,
   onFilter,
+  selectionActions,
   onPageChange,
   onPageSizeChange,
   onRowClick,
@@ -128,6 +136,8 @@ export const DataTable = <TData extends RowData>({
     features,
     data,
     columns,
+    getRowId: getRowId ? (row: TData) => getRowId(row) : undefined,
+    manualFiltering: Boolean(onFilter),
     onColumnFiltersChange: setColumnFilters,
     onColumnOrderChange: setColumnOrder,
     onRowSelectionChange: handleRowSelectionChange,
@@ -166,45 +176,72 @@ export const DataTable = <TData extends RowData>({
     onFilter?.(updated);
   };
 
+  const handleSetFilters = (updated: ColumnFiltersState) => {
+    setColumnFilters(updated);
+    onFilter?.(updated);
+  };
+
   const rows = table.getRowModel().rows || [];
   const hasPagination = Boolean(total > pageSize);
+  const selectedCount = Object.values(rowSelection).filter(Boolean).length;
+  const activeFilters = columnFilters.reduce(
+    (count, f) => count + ((f.value as string[])?.length ?? 0),
+    0,
+  );
 
   return (
     <div className="w-full rounded-md border bg-white">
-      <div className="flex w-full items-center justify-between px-4 py-2">
-        <Input
-          className="w-75"
-          onChange={handleQueryChange}
-          placeholder="Search..."
-          type="search"
-          value={query}
-        />
-        {onFilter && (
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button variant="outline">
-                  <ListFilter /> Filter
-                </Button>
-              }
-            />
-            <PopoverContent align="end">
-              <PopoverHeader>
-                <div className="flex items-center justify-between">
-                  <PopoverTitle>Filters</PopoverTitle>
-                </div>
-                <PopoverDescription></PopoverDescription>
-              </PopoverHeader>
-              <DataTableFilter
-                columnFilters={columnFilters}
-                filters={[]}
-                getFilterValues={getFilterValues}
-                onFilterChange={handleFilterChange}
-                setColumnFilters={setColumnFilters}
-              />
-            </PopoverContent>
-          </Popover>
+      <div className="flex w-full items-center justify-between gap-4 px-4 py-2">
+        {onSearch ? (
+          <Input
+            className="w-75"
+            onChange={handleQueryChange}
+            placeholder="Search..."
+            type="search"
+            value={query}
+          />
+        ) : (
+          <div />
         )}
+        <div className="flex items-center gap-x-2">
+          {selectedCount > 0 && selectionActions && (
+            <div className="flex items-center gap-x-2">
+              <span className="text-muted-foreground text-xs">{selectedCount} selected</span>
+              {selectionActions}
+            </div>
+          )}
+          {onFilter && filters.length > 0 && (
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button variant="outline">
+                    <ListFilter /> Filter
+                    {activeFilters > 0 && (
+                      <span className="bg-primary rounded-full px-1.5 text-[10px] text-white">
+                        {activeFilters}
+                      </span>
+                    )}
+                  </Button>
+                }
+              />
+              <PopoverContent align="end">
+                <PopoverHeader>
+                  <div className="flex items-center justify-between">
+                    <PopoverTitle>Filters</PopoverTitle>
+                  </div>
+                  <PopoverDescription></PopoverDescription>
+                </PopoverHeader>
+                <DataTableFilter
+                  columnFilters={columnFilters}
+                  filters={filters}
+                  getFilterValues={getFilterValues}
+                  onFilterChange={handleFilterChange}
+                  setColumnFilters={handleSetFilters}
+                />
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
       </div>
       <div className={cn("w-full", hasPagination ? "border-t" : "")}>
         <Table>

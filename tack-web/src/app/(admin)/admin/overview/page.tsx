@@ -1,7 +1,6 @@
 "use client";
 
-import { Users } from "lucide-react";
-import { subDays } from "date-fns";
+import { Activity, LayoutGrid, UserCheck, Users } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -14,10 +13,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import Link from "next/link";
 
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import { ActivityList, EmptyNote, Panel } from "@/components/admin";
 import { ButtonGroup, Statistics } from "@/components/shared";
+import { boardName, periodLabel, statItem } from "@/lib/admin";
 import { useValues } from "@/hooks/use-values";
+import type { Overview } from "@/types/admin";
+import { useApiQuery } from "@/lib/query";
 import { PERIODS } from "@/config/params";
 import { formatDate } from "@/lib/utils";
 import {
@@ -28,67 +32,42 @@ import {
   usersRetentionChartConfig,
 } from "@/config/charts";
 
-const uniqueUsersByBrowserData = [
-  { browser: "chrome", visitors: 1 },
-  { browser: "firefox", visitors: 1 },
-  { browser: "safari", visitors: 1 },
-  { browser: "edge", visitors: 1 },
-  { browser: "others", visitors: 1 },
-];
-
-const uniqueUsersByDeviceData = [
-  { device: "desktop", visitors: 1 },
-  { device: "tablet", visitors: 1 },
-  { device: "mobile", visitors: 1 },
-];
-
 const Page = () => {
   const { onValueChange, values } = useValues({ period: PERIODS[0].value });
-
-  const totalActiveUsers = Array.from({ length: 7 }, (_, i) => {
-    const date = subDays(new Date(), 6 - i);
-    return { date: formatDate(date), visitors: 0 };
+  const { data, isPending } = useApiQuery<Overview>({
+    keys: ["admin", "overview"],
+    url: "/api/admin/overview",
+    params: { period: values.period },
   });
 
-  const usersRetention = Array.from({ length: 7 }, (_, i) => {
-    const date = subDays(new Date(), 6 - i);
-    return { date: formatDate(date), visitors: 0 };
-  });
+  const against = `the previous ${periodLabel(values.period)}`;
+  const totalActiveUsers = (data?.activeUsers ?? []).map((p) => ({
+    date: formatDate(p.date, "dd/MM"),
+    visitors: p.visitors,
+  }));
+  const usersRetention = (data?.retention ?? []).map((p) => ({
+    date: formatDate(p.date, "dd/MM"),
+    visitors: p.visitors,
+  }));
+  const uniqueUsersByBrowserData = data?.usersByBrowser ?? [];
+  const uniqueUsersByDeviceData = data?.usersByDevice ?? [];
+  // A pie of zeros draws nothing at all; say so instead.
+  const noVisitors = uniqueUsersByBrowserData.every((d) => d.visitors === 0);
 
   return (
     <div className="space-y-6">
       <Statistics
-        items={[
-          {
-            icon: Users,
-            label: "Sessions",
-            value: "0",
-            description: "+0% from last month",
-            delta: "+0%",
-          },
-          {
-            icon: Users,
-            label: "Boards",
-            value: "0",
-            description: "+0% from last month",
-            delta: "+0%",
-          },
-          {
-            icon: Users,
-            label: "Active Users",
-            value: "0",
-            description: "+0% from last month",
-            delta: "+0%",
-          },
-          {
-            icon: Users,
-            label: "Total Users",
-            value: "0",
-            description: "+0% from last month",
-            delta: "+0%",
-          },
-        ]}
-        isLoading={true}
+        items={
+          data
+            ? [
+                statItem(Activity, "Sessions", data.stats.sessions, against),
+                statItem(LayoutGrid, "Boards", data.stats.boards, against),
+                statItem(UserCheck, "Active Users", data.stats.activeUsers, against),
+                statItem(Users, "Total Users", data.stats.totalUsers, against),
+              ]
+            : []
+        }
+        isLoading={isPending}
       />
       <div className="flex w-full items-center justify-end">
         <ButtonGroup
@@ -98,33 +77,38 @@ const Page = () => {
         />
       </div>
       <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-4 rounded-md border bg-white p-4">
-          <p className="text-sm font-medium">Total Active Users</p>
+        <Panel className="col-span-2" title="Total Active Users">
           <div className="w-full">
             <ChartContainer className="w-full" config={totalActiveUsersChartConfig}>
               <BarChart accessibilityLayer data={totalActiveUsers}>
                 <CartesianGrid vertical={false} />
                 <XAxis
                   {...createBaseXAxisConfig("date", {
-                    tickFormatter: (value) => formatDate(value),
+                    tickFormatter: (value) => value,
                   })}
                 />
                 <YAxis
+                  allowDecimals={false}
                   tickCount={6}
-                  domain={[0, 50]}
+                  domain={[0, "auto"]}
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 12 }}
                 />
-                <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                <Bar dataKey="visitors" fill="var(--color-primary)" radius={8} />
+                <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                <Bar
+                  dataKey="visitors"
+                  fill="var(--color-primary)"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={32}
+                />
               </BarChart>
             </ChartContainer>
           </div>
-        </div>
-        <div className="space-y-4 rounded-md border bg-white p-4">
-          <p className="text-sm font-medium">Unique Users By Browser</p>
-          <div className="w-full">
+        </Panel>
+        <Panel title="Unique Users By Browser">
+          {noVisitors && <EmptyNote>No visitors in this period.</EmptyNote>}
+          <div className={noVisitors ? "hidden" : "w-full"}>
             <ChartContainer
               config={uniqueUsersByBrowserChartConfig}
               className="mx-auto aspect-square max-h-62.5"
@@ -147,12 +131,12 @@ const Page = () => {
               </PieChart>
             </ChartContainer>
           </div>
-        </div>
+        </Panel>
       </div>
       <div className="grid grid-cols-3 gap-6">
-        <div className="space-y-4 rounded-md border bg-white p-4">
-          <p className="text-sm font-medium">Unique Users By Device</p>
-          <div className="w-full">
+        <Panel title="Unique Users By Device">
+          {noVisitors && <EmptyNote>No visitors in this period.</EmptyNote>}
+          <div className={noVisitors ? "hidden" : "w-full"}>
             <ChartContainer
               config={uniqueUsersByDeviceChartConfig}
               className="mx-auto aspect-square max-h-62.5"
@@ -175,41 +159,64 @@ const Page = () => {
               </PieChart>
             </ChartContainer>
           </div>
-        </div>
-        <div className="col-span-2 space-y-4 rounded-md border bg-white p-4">
-          <p className="text-sm font-medium">Users Retention</p>
+        </Panel>
+        <Panel className="col-span-2" title="Users Retention">
           <div className="w-full">
             <ChartContainer className="w-full" config={usersRetentionChartConfig}>
               <LineChart accessibilityLayer data={usersRetention}>
                 <CartesianGrid vertical={false} />
                 <XAxis
                   {...createBaseXAxisConfig("date", {
-                    tickFormatter: (value) => formatDate(value),
+                    tickFormatter: (value) => value,
                   })}
                 />
                 <YAxis
+                  allowDecimals={false}
                   tickCount={6}
-                  domain={[0, 50]}
+                  domain={[0, "auto"]}
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 12 }}
                 />
-                <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                <Line dataKey="visitors" fill="var(--color-primary)" radius={8} />
+                <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                <Line
+                  dataKey="visitors"
+                  stroke="var(--color-primary)"
+                  strokeWidth={2}
+                  dot={false}
+                  type="monotone"
+                />
               </LineChart>
             </ChartContainer>
           </div>
-        </div>
+        </Panel>
       </div>
       <div className="grid grid-cols-2 gap-6">
-        <div className="space-y-4 rounded-md border bg-white p-4">
-          <p className="text-sm font-medium"></p>
-          <div className="w-full"></div>
-        </div>
-        <div className="space-y-4 rounded-md border bg-white p-4">
-          <p className="text-sm font-medium">Recent Activities</p>
-          <div className="w-full"></div>
-        </div>
+        <Panel title="Top Boards">
+          {data?.topBoards.length ? (
+            <ul className="divide-y">
+              {data.topBoards.map((board) => (
+                <li className="flex items-center justify-between gap-4 py-2 text-sm" key={board.id}>
+                  <Link
+                    className="truncate font-medium hover:underline"
+                    href={`/admin/boards?board=${board.id}`}
+                  >
+                    {boardName(board.name, board.id)}
+                  </Link>
+                  <span className="text-muted-foreground shrink-0 text-xs">
+                    {board.sessions.toLocaleString()} sessions ·{" "}
+                    {board.visitors.toLocaleString()} visitors
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyNote>No boards opened in this period.</EmptyNote>
+          )}
+        </Panel>
+        <Panel title="Recent Activities">
+          <ActivityList items={data?.recentActivity ?? []} />
+        </Panel>
       </div>
     </div>
   );

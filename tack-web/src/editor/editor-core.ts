@@ -177,11 +177,11 @@ export class Editor {
   /**
    * Nothing writes to the board: a view link, a board saved by a newer Tack than this one
    * (editing it could write data the newer version doesn't expect), or a board the server says
-   * is full (it would drop the edits).
+   * is full (it would drop the edits), or one an editor locked with the read-only switch.
    */
   get readOnly(): boolean {
-    const { outdated, boardFull } = this.ui;
-    return this.viewOnly || outdated || boardFull;
+    const { outdated, boardFull, boardLocked } = this.ui;
+    return this.viewOnly || outdated || boardFull || boardLocked;
   }
   /** Uploads an image for this board and returns its asset id. Set by the app. */
   private uploadAsset: ((file: Blob) => Promise<{ assetId: string }>) | null = null;

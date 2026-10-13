@@ -30,6 +30,7 @@ import {
 
 import { ARRANGE_ICONS, runArrange } from "./ArrangeMenu";
 import type { Editor, ZOrderMove } from "./editor-core";
+import { usePublicConfig } from "@/lib/public-config";
 import { useEditorStore } from "@/stores/editor";
 import { ALIGN_ACTIONS } from "./align-actions";
 import { exportToFile } from "./ExportMenu";
@@ -108,6 +109,7 @@ const ORDER: { move: ZOrderMove; label: string; icon: LucideIcon; keys: string }
 function MenuItems({ editor }: { editor: Editor }) {
   const selectedIds = useEditorStore((s) => s.selectedIds);
   const readOnly = editor.readOnly;
+  const canImport = usePublicConfig()?.board.diagramImport ?? true;
   const has = selectedIds.length > 0;
   const shapes = selectedIds.map((id) => editor.getShape(id)).filter((s) => !!s);
   const allLocked = has && shapes.every((s) => s.locked);
@@ -163,7 +165,7 @@ function MenuItems({ editor }: { editor: Editor }) {
           keys={`${MOD}A`}
           onClick={() => editor.select(editor.sortedIds())}
         />
-        {!readOnly && (
+        {!readOnly && canImport && (
           <Item
             icon={Code2}
             label="Diagram from code…"

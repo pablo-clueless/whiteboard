@@ -13,11 +13,11 @@ export function createBaseXAxisConfig(dataKey: string, options?: XAxisProps): XA
 }
 
 export const totalActiveUsersChartConfig: ChartConfig = {
-  users: { label: "Users", color: "var(--color-primary)" },
+  visitors: { label: "Visitors", color: "var(--color-primary)" },
 };
 
 export const usersRetentionChartConfig: ChartConfig = {
-  users: { label: "Users", color: "var(--color-primary)" },
+  visitors: { label: "Visitors", color: "var(--color-primary)" },
 };
 
 export const uniqueUsersByBrowserChartConfig: ChartConfig = {
