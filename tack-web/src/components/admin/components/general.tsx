@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 
-import { TabPanel } from "@/components/shared";
-import { Textarea } from "@/components/ui/textarea";
-import type { PlatformProps } from "@/types/system";
-import { TabProps } from "@/types/app";
 import { NumberRow, SettingsHistory, SettingsSection } from "./section";
 import { useSectionDraft, useSettings } from "./use-settings";
+import { Textarea } from "@/components/ui/textarea";
+import type { PlatformProps } from "@/types/system";
+import { TabPanel } from "@/components/shared";
+import { TabProps } from "@/types/app";
 import { ToggleRow } from "../fields";
 
 export const General = ({ tab }: TabProps) => {
@@ -69,8 +69,8 @@ const PlatformForm = ({ saved }: { saved: PlatformProps }) => {
       <div className="space-y-1.5 py-3">
         <p className="text-sm font-medium">Allowed origins</p>
         <p className="text-muted-foreground text-xs">
-          Sites allowed to call the API and open boards, one per line, like https://tack.example.com.
-          Remove this site and the admin interface stops working.
+          Sites allowed to call the API and open boards, one per line, like
+          https://tack.example.com. Remove this site and the admin interface stops working.
         </p>
         {errors.allowedOrigins && (
           <p className="text-destructive text-xs" role="alert">
@@ -84,7 +84,10 @@ const PlatformForm = ({ saved }: { saved: PlatformProps }) => {
             setOrigins(e.target.value);
             set(
               "allowedOrigins",
-              e.target.value.split("\n").map((o) => o.trim()).filter(Boolean),
+              e.target.value
+                .split("\n")
+                .map((o) => o.trim())
+                .filter(Boolean),
             );
           }}
           rows={4}

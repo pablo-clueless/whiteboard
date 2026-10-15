@@ -29,7 +29,7 @@ import {
 import type { Editor, ShapeKnobs, StyleProps, ZOrderMove } from "./editor-core";
 import { MAX_POINTS, MAX_SIDES, MIN_POINTS, MIN_SIDES } from "./shapes/polygon";
 import { HEADER_COLORS, setTableFields } from "./shapes/table-fields";
-import { fieldsToText, textToFields } from "./shapes/table-text";
+import { fieldsToText, readFieldsText } from "./shapes/table-text";
 import type { TableField, TableProps } from "./shapes/table";
 import { Slider as UiSlider } from "@/components/ui/slider";
 import { ARROW_HEADS, type ArrowHead } from "./shapes/line";
@@ -388,9 +388,14 @@ function FieldsEditor({
   const [draft, setDraft] = useState(original);
   const commit = () => {
     if (draft === original) return;
-    const next = textToFields(draft);
+    const { fields: next, refs } = readFieldsText(draft);
     if (!next.length) return setDraft(original); // a table keeps at least one field
-    setTableFields(editor, id, next);
+    const missing = setTableFields(editor, id, next, refs);
+    if (missing.length)
+      editor.notify(
+        `No table called ${missing.join(", ")} on the board, so ${missing.length === 1 ? "that relationship wasn't" : "those relationships weren't"} drawn.`,
+        "info",
+      );
   };
   return (
     <div>
@@ -412,7 +417,8 @@ function FieldsEditor({
         className="text-ink focus-visible:border-primary focus-visible:ring-primary/20 w-full resize-y rounded-lg border bg-[#fafafa] px-2.5 py-2 font-mono text-[11px] leading-relaxed outline-none focus-visible:ring-3"
       />
       <p className="text-ink/45 mt-1 text-[10.5px] leading-snug">
-        One per line: <code>name type pk fk // note</code>. Arrows stay on their fields.
+        One per line: <code>name type pk fk // note</code>. Add <code>&gt; teams.id</code> to draw a
+        relationship. Arrows stay on their fields.
       </p>
     </div>
   );

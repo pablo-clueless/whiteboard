@@ -9,8 +9,15 @@ export function actionLabel(action: string) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+const MAX_ITEMS = 5;
+
 export const ActivityList = ({ items }: { items: AuditLog[] }) => {
   if (!items.length) return <EmptyNote>No activity yet.</EmptyNote>;
+
+  if (items.length > MAX_ITEMS) {
+    items = items.slice(0, MAX_ITEMS);
+  }
+
   return (
     <ul className="divide-y">
       {items.map((log) => (

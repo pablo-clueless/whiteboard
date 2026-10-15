@@ -299,7 +299,7 @@ const Page = () => {
               <div className="flex items-center gap-1.5">
                 <Link
                   className={buttonVariants({ size: "xs", variant: "ghost" })}
-                  href={`/admin/boards?board=${selected.boardId}`}
+                  href={`/admin/boards/${selected.boardId}`}
                 >
                   <ExternalLink /> Board
                 </Link>

@@ -5,6 +5,7 @@ import { fieldPort, type TableField, tableHeight, tableWidth } from "../shapes/t
 import { looksLikeDbml, parseDbml, type RefKind, type Schema } from "./dbml";
 import { type Builder, placeBuilt } from "../templates";
 import type { Editor } from "../editor-core";
+import { unionBox } from "../geometry";
 import { measureText } from "../shapes/text";
 import {
   type ClassDiagram,
@@ -15,6 +16,7 @@ import {
   parseErDiagram,
   parseFlowchart,
   parseSequenceDiagram,
+  parseStateDiagram,
   type SequenceDiagram,
 } from "./mermaid";
 
@@ -22,6 +24,7 @@ import {
 export type Detected =
   | { kind: "dbml" | "mermaid-er"; schema: Schema }
   | { kind: "flowchart"; chart: Flowchart }
+  | { kind: "state"; chart: Flowchart }
   | { kind: "class"; diagram: ClassDiagram }
   | { kind: "sequence"; diagram: SequenceDiagram }
   | { kind: "unsupported"; what: string };
@@ -33,6 +36,7 @@ export function detectDiagram(text: string): Detected | null {
   if (kind === "er") return { kind: "mermaid-er", schema: parseErDiagram(text) };
   if (kind === "class") return { kind: "class", diagram: parseClassDiagram(text) };
   if (kind === "sequence") return { kind: "sequence", diagram: parseSequenceDiagram(text) };
+  if (kind === "state") return { kind: "state", chart: parseStateDiagram(text) };
   if (kind === "other") {
     const what = text
       .trim()
@@ -53,6 +57,11 @@ export function describe(d: Detected): string {
     const c = d.chart;
     return `Mermaid flowchart · ${plural(c.nodes.length, "node")}, ${plural(c.edges.length, "link")}`;
   }
+  if (d.kind === "state") {
+    const c = d.chart;
+    const states = c.nodes.filter((n) => n.shape !== "start" && n.shape !== "end").length;
+    return `Mermaid state diagram · ${plural(states, "state")}, ${plural(c.edges.length, "transition")}`;
+  }
   if (d.kind === "class") {
     const c = d.diagram;
     return `Mermaid class diagram · ${plural(c.classes.length, "class", "classes")}, ${plural(c.relations.length, "relationship")}`;
@@ -70,7 +79,7 @@ export function describe(d: Detected): string {
 export const warningsOf = (d: Detected): string[] =>
   d.kind === "unsupported"
     ? []
-    : d.kind === "flowchart"
+    : d.kind === "flowchart" || d.kind === "state"
       ? d.chart.warnings
       : d.kind === "class" || d.kind === "sequence"
         ? d.diagram.warnings
@@ -80,7 +89,7 @@ export const warningsOf = (d: Detected): string[] =>
 export const drawable = (d: Detected | null): d is Exclude<Detected, { kind: "unsupported" }> =>
   !!d &&
   d.kind !== "unsupported" &&
-  (d.kind === "flowchart"
+  (d.kind === "flowchart" || d.kind === "state"
     ? d.chart.nodes.length > 0
     : d.kind === "class"
       ? d.diagram.classes.length > 0
@@ -88,15 +97,79 @@ export const drawable = (d: Detected | null): d is Exclude<Detected, { kind: "un
         ? d.diagram.participants.length > 0
         : d.schema.tables.length > 0);
 
-/** Draws a detected diagram in the middle of the screen. One undo step; returns the new ids. */
-export function insertDiagram(editor: Editor, d: Detected): string[] {
+/**
+ * Draws a detected diagram in the middle of the screen. One undo step; returns the new ids.
+ * With `source`, the board remembers the code, so the diagram can be updated from it later.
+ */
+export function insertDiagram(editor: Editor, d: Detected, source?: string): string[] {
   if (!drawable(d)) return [];
-  const ids = placeBuilt(editor, (b) => {
-    if (d.kind === "flowchart") buildFlowchart(b, d.chart);
-    else if (d.kind === "class") buildClassDiagram(b, d.diagram);
-    else if (d.kind === "sequence") buildSequence(b, d.diagram);
-    else buildSchema(b, d.schema);
+  const ids = placeBuilt(editor, (b) => build(b, d));
+  if (source !== undefined) recordDiagram(editor, crypto.randomUUID(), source, ids);
+  editor.select([]);
+  return ids;
+}
+
+function build(b: Builder, d: Exclude<Detected, { kind: "unsupported" }>) {
+  if (d.kind === "flowchart" || d.kind === "state") buildFlowchart(b, d.chart);
+  else if (d.kind === "class") buildClassDiagram(b, d.diagram);
+  else if (d.kind === "sequence") buildSequence(b, d.diagram);
+  else buildSchema(b, d.schema);
+}
+
+/* ── Diagrams drawn from code, remembered so they can be redrawn ────────── */
+
+/** Stored in the board's `diagrams` map. Shared by everyone, and not part of undo history. */
+type DiagramRecord = { source: string; ids: string[] };
+
+/** A diagram on the board that came from code, with the shapes of it that still exist. */
+export type DrawnDiagram = { id: string; source: string; ids: string[] };
+
+function recordDiagram(editor: Editor, id: string, source: string, ids: string[]) {
+  if (!ids.length || editor.readOnly) return;
+  editor.board.doc.transact(() => {
+    editor.board.diagrams.set(id, { source, ids } satisfies DiagramRecord);
+    // Records whose shapes are all gone (deleted, or undone) are dropped as new ones come in.
+    editor.board.diagrams.forEach((value, key) => {
+      if (!(value as Partial<DiagramRecord>).ids?.some((s) => editor.getShape(s))) {
+        editor.board.diagrams.delete(key);
+      }
+    });
   });
+}
+
+/** The diagram the selection is part of, if it was drawn from code and is still on the board. */
+export function diagramOf(editor: Editor, selection: string[]): DrawnDiagram | null {
+  if (!selection.length) return null;
+  const selected = new Set(editor.withChildren(selection));
+  let found: DrawnDiagram | null = null;
+  editor.board.diagrams.forEach((value, id) => {
+    if (found) return;
+    const record = value as Partial<DiagramRecord>;
+    if (typeof record.source !== "string" || !Array.isArray(record.ids)) return;
+    const ids = record.ids.filter((s) => editor.getShape(s));
+    if (ids.some((s) => selected.has(s))) found = { id, source: record.source, ids };
+  });
+  return found;
+}
+
+/**
+ * Redraws a diagram from new code where the old one was (same top-left), in one undo step.
+ * Shapes added to it by hand are left alone; the old copy's are replaced, so changes made to them
+ * on the board are lost (locked ones are kept).
+ */
+export function updateDiagram(
+  editor: Editor,
+  diagram: DrawnDiagram,
+  d: Detected,
+  source: string,
+): string[] {
+  if (!drawable(d) || editor.readOnly) return [];
+  const old = unionBox(diagram.ids.map((id) => editor.getBounds(id)));
+  const ids = placeBuilt(editor, (b) => build(b, d), {
+    replace: editor.unlocked(diagram.ids),
+    at: old ? { x: old.x, y: old.y } : undefined,
+  });
+  recordDiagram(editor, diagram.id, source, ids);
   editor.select([]);
   return ids;
 }
@@ -233,6 +306,12 @@ function nodeSize(label: string, shape: FlowNodeShape): { w: number; h: number }
       return { w: Math.max(140, t.w + 72), h: Math.max(64, t.h + 32) };
     case "database":
       return { w: 200, h: 60 };
+    case "start":
+      return { w: 22, h: 22 };
+    case "end":
+      return { w: 28, h: 28 };
+    case "bar":
+      return { w: 96, h: 8 };
     default:
       return { w: Math.max(120, t.w + 44), h: Math.max(52, t.h + 28) };
   }
@@ -242,7 +321,14 @@ function buildFlowchart(b: Builder, chart: Flowchart) {
   const g = new dagre.graphlib.Graph({ multigraph: true, compound: true });
   g.setGraph({ rankdir: chart.direction, nodesep: 56, ranksep: 72, marginx: 0, marginy: 0 });
   g.setDefaultEdgeLabel(() => ({}));
-  const sizes = new Map(chart.nodes.map((n) => [n.id, nodeSize(n.label, n.shape)]));
+  // Fork and join bars lie across the direction of flow.
+  const across = chart.direction === "LR" || chart.direction === "RL";
+  const sizes = new Map(
+    chart.nodes.map((n) => {
+      const size = nodeSize(n.label, n.shape);
+      return [n.id, n.shape === "bar" && across ? { w: size.h, h: size.w } : size];
+    }),
+  );
   for (const n of chart.nodes)
     g.setNode(n.id, { width: sizes.get(n.id)!.w, height: sizes.get(n.id)!.h });
   // Subgraphs become clusters, so dagre keeps their nodes together and tells us their extent.
@@ -257,6 +343,10 @@ function buildFlowchart(b: Builder, chart: Flowchart) {
     });
     for (const id of sg.nodes) if (g.hasNode(id)) g.setParent(id, key);
   }
+  // Nested subgraphs (composite states) sit inside their parent's cluster.
+  for (const sg of chart.subgraphs)
+    if (sg.parent && g.hasNode(`subgraph:${sg.parent}`))
+      g.setParent(`subgraph:${sg.id}`, `subgraph:${sg.parent}`);
   chart.edges.forEach((e, i) => {
     // Leave room for a label on the link.
     const t = e.label
@@ -283,6 +373,23 @@ function buildFlowchart(b: Builder, chart: Flowchart) {
     centres.set(n.id, { x, y });
     let id: string;
     switch (n.shape) {
+      case "start":
+        id = b.shape("ellipse", left, top, { w, h, fill: INK, stroke: INK, strokeWidth: 1 });
+        break;
+      case "end":
+        // A ring round a dot, like UML's final state.
+        id = b.shape("ellipse", left, top, { w, h, fill: INK, stroke: "#c9c9cf", strokeWidth: 5 });
+        break;
+      case "bar":
+        id = b.shape("rect", left, top, {
+          w,
+          h,
+          fill: INK,
+          stroke: INK,
+          strokeWidth: 1,
+          radius: 2,
+        });
+        break;
       case "circle":
         id = b.labelled("ellipse", left, top, w, h, n.label, { ...ink, fill: "#ffe0c7" }, text);
         break;

@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 
 import { ARRANGE_ICONS, runArrange } from "./ArrangeMenu";
+import { diagramOf } from "./import/diagram";
 import type { Editor, ZOrderMove } from "./editor-core";
 import { usePublicConfig } from "@/lib/public-config";
 import { useEditorStore } from "@/stores/editor";
@@ -218,6 +219,13 @@ function MenuItems({ editor }: { editor: Editor }) {
             onClick={() => editor.duplicate(selectedIds)}
           />
           <ContextMenu.Separator className={separator} />
+          {canImport && diagramOf(editor, selectedIds) && (
+            <Item
+              icon={Code2}
+              label="Edit diagram code…"
+              onClick={() => editor.ui.setImportOpen(true)}
+            />
+          )}
           {editor.unitCount(selectedIds) > 1 && (
             <Item
               icon={Group}

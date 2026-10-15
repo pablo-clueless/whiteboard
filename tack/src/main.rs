@@ -37,6 +37,7 @@ pub struct AppState {
     pub pool: PgPool,
     pub rooms: RoomRegistry,
     pub settings: SettingsStore,
+    pub mailer: mail::Mailer,
     pub started_at: DateTime<Utc>,
 }
 
@@ -59,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let config = Arc::new(Config::from_env()?);
+    let mailer = mail::Mailer::new(config.smtp_url.as_deref(), &config.mail_from)?;
     let pool = db::connect(&config.database_url).await?;
     tracing::info!("database ready");
     let settings = SettingsStore::load(&pool, &config).await?;
@@ -71,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         pool: pool.clone(),
         rooms: RoomRegistry::new(pool, settings.clone()),
         settings: settings.clone(),
+        mailer,
         started_at: Utc::now(),
     };
 

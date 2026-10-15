@@ -4,7 +4,6 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@ta
 import React, { useState } from "react";
 
 import { codeOf, type HttpError } from "@/lib/client";
-import { Toaster } from "@/components/ui/sonner";
 
 interface Props {
   children: React.ReactNode;
@@ -36,10 +35,5 @@ function createClient() {
 export const QueryProvider = ({ children }: Props) => {
   const [client] = useState(createClient);
 
-  return (
-    <QueryClientProvider client={client}>
-      {children}
-      <Toaster position="top-right" />
-    </QueryClientProvider>
-  );
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };

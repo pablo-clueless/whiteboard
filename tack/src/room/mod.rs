@@ -317,4 +317,264 @@ mod tests {
         assert_eq!(ConnId::parse("x1"), None);
         assert_eq!(ConnId::parse("c"), None);
     }
+
+    /// A room end to end, through the registry, against the dev Postgres (skipped without it).
+    /// Each client is a channel the room writes frames to, read the way y-websocket reads them:
+    /// one message per frame.
+    mod end_to_end {
+        use yrs::{
+            Doc, Map, ReadTxn, StateVector, Transact, Update,
+            encoding::read::Cursor,
+            sync::{Awareness, AwarenessUpdate, Message, MessageReader, SyncMessage},
+            updates::{
+                decoder::{Decode, DecoderV1},
+                encoder::Encode,
+            },
+        };
+
+        use super::*;
+        use crate::{config::Config, room::persist::tests as db_test};
+
+        struct Client {
+            conn: ConnId,
+            handle: RoomHandle,
+            rx: mpsc::Receiver<Bytes>,
+        }
+
+        impl Client {
+            async fn join(rooms: &RoomRegistry, board: BoardId, role: Role) -> Self {
+                let (tx, rx) = mpsc::channel(OUTGOING_QUEUE);
+                let conn = ConnId::new();
+                let info = ClientInfo {
+                    user_id: None,
+                    user_name: None,
+                    browser: "Test",
+                    device: "Desktop",
+                    connected_at: Utc::now(),
+                };
+                let handle = rooms.join(board, conn, role, info, tx).await.expect("room open");
+                Self { conn, handle, rx }
+            }
+
+            async fn send(&self, msg: Message) {
+                assert!(self.handle.message(self.conn, msg.encode_v1().into()).await);
+            }
+
+            /// The next frame, which must hold exactly one message.
+            async fn next(&mut self) -> Message {
+                let frame = tokio::time::timeout(Duration::from_secs(2), self.rx.recv())
+                    .await
+                    .expect("a message within 2 s")
+                    .expect("connection open");
+                let mut decoder = DecoderV1::new(Cursor::new(&frame));
+                let mut messages: Vec<_> =
+                    MessageReader::new(&mut decoder).map(|m| m.expect("decodable")).collect();
+                assert_eq!(messages.len(), 1, "one message per frame, got {messages:?}");
+                messages.remove(0)
+            }
+
+            /// Waits for a message matching `want`, skipping others (awareness, sync replies).
+            async fn expect(&mut self, want: impl Fn(&Message) -> bool) -> Message {
+                for _ in 0..20 {
+                    let msg = self.next().await;
+                    if want(&msg) {
+                        return msg;
+                    }
+                }
+                panic!("never got the expected message");
+            }
+
+            /// Nothing more arrives for a moment.
+            async fn quiet(&mut self) -> Vec<Message> {
+                let mut extra = Vec::new();
+                while let Ok(Some(frame)) =
+                    tokio::time::timeout(Duration::from_millis(300), self.rx.recv()).await
+                {
+                    let mut decoder = DecoderV1::new(Cursor::new(&frame));
+                    extra.extend(MessageReader::new(&mut decoder).filter_map(Result::ok));
+                }
+                extra
+            }
+
+            async fn leave(self) {
+                self.handle.leave(self.conn).await;
+            }
+        }
+
+        async fn setup() -> Option<(sqlx::PgPool, RoomRegistry, BoardId)> {
+            let pool = db_test::pool().await?;
+            let config = Config {
+                addr: "127.0.0.1:0".parse().unwrap(),
+                allowed_origins: vec![],
+                database_url: String::new(),
+                max_board_bytes: 20 * 1024 * 1024,
+                app_url: String::new(),
+                trust_proxy: false,
+                storage_quota_bytes: None,
+                bootstrap_admin: None,
+                smtp_url: None,
+                mail_from: "test@localhost".into(),
+            };
+            let settings = SettingsStore::load(&pool, &config).await.unwrap();
+            let board = db_test::new_board(&pool).await;
+            Some((pool.clone(), RoomRegistry::new(pool, settings), board))
+        }
+
+        /// One edit from a client's own doc, as a sync update message.
+        fn edit(doc: &Doc, key: &str) -> Message {
+            let shapes = doc.get_or_insert_map("shapes");
+            let before = doc.transact().state_vector();
+            shapes.insert(&mut doc.transact_mut(), key, "rect");
+            Message::Sync(SyncMessage::Update(doc.transact().encode_diff_v1(&before)))
+        }
+
+        fn awareness(doc: Doc, name: &str) -> Message {
+            let mut awareness = Awareness::new(doc);
+            awareness.set_local_state(serde_json::json!({ "user": { "name": name } })).unwrap();
+            Message::Awareness(awareness.update().unwrap())
+        }
+
+        fn names(update: &AwarenessUpdate) -> Vec<String> {
+            let mut names: Vec<String> = update
+                .clients
+                .values()
+                .filter_map(|e| serde_json::from_str::<serde_json::Value>(&e.json).ok())
+                .filter_map(|v| v["user"]["name"].as_str().map(str::to_owned))
+                .collect();
+            names.sort();
+            names
+        }
+
+        /// The keys of `shapes` in an update, applied to an empty doc.
+        fn shapes_in(update: &[u8]) -> Vec<String> {
+            let doc = Doc::new();
+            let shapes = doc.get_or_insert_map("shapes");
+            doc.transact_mut().apply_update(Update::decode_v1(update).unwrap()).unwrap();
+            let mut keys: Vec<String> = shapes.keys(&doc.transact()).map(str::to_owned).collect();
+            keys.sort();
+            keys
+        }
+
+        #[tokio::test]
+        async fn edits_reach_everyone_else_and_viewers_cant_edit() {
+            let Some((pool, rooms, board)) = setup().await else { return };
+            let mut alice = Client::join(&rooms, board, Role::Edit).await;
+            let mut bob = Client::join(&rooms, board, Role::Edit).await;
+            let mut viewer = Client::join(&rooms, board, Role::View).await;
+            // Each starts with the room's sync step 1, in its own frame.
+            for c in [&mut alice, &mut bob, &mut viewer] {
+                assert!(matches!(c.next().await, Message::Sync(SyncMessage::SyncStep1(_))));
+            }
+
+            let doc = Doc::new();
+            alice.send(edit(&doc, "a")).await;
+            for c in [&mut bob, &mut viewer] {
+                let Message::Sync(SyncMessage::Update(u)) =
+                    c.expect(|m| matches!(m, Message::Sync(SyncMessage::Update(_)))).await
+                else {
+                    unreachable!()
+                };
+                assert_eq!(shapes_in(&u), ["a"]);
+            }
+            // Not echoed to the sender.
+            assert!(!alice.quiet().await.iter().any(|m| matches!(m, Message::Sync(_))));
+
+            // A viewer's edit goes nowhere, and isn't in the room's copy.
+            viewer.send(edit(&Doc::new(), "v")).await;
+            assert!(!bob.quiet().await.iter().any(|m| matches!(m, Message::Sync(_))));
+            viewer.send(Message::Sync(SyncMessage::SyncStep1(StateVector::default()))).await;
+            let Message::Sync(SyncMessage::SyncStep2(state)) =
+                viewer.expect(|m| matches!(m, Message::Sync(SyncMessage::SyncStep2(_)))).await
+            else {
+                unreachable!()
+            };
+            assert_eq!(shapes_in(&state), ["a"]);
+
+            for c in [alice, bob, viewer] {
+                c.leave().await;
+            }
+            rooms.close_and_wait(board).await;
+            db_test::delete_board(&pool, board).await;
+        }
+
+        #[tokio::test]
+        async fn a_late_joiner_sees_who_is_there_and_hears_when_they_leave() {
+            let Some((pool, rooms, board)) = setup().await else { return };
+            let mut first = Client::join(&rooms, board, Role::Edit).await;
+            first.next().await;
+            first.send(awareness(Doc::new(), "first")).await;
+            first.quiet().await;
+
+            // Sync step 1, then everyone's presence in a frame of its own (y-websocket reads only
+            // the first message of a frame, so packing them together hid everyone).
+            let mut late = Client::join(&rooms, board, Role::Edit).await;
+            assert!(matches!(late.next().await, Message::Sync(SyncMessage::SyncStep1(_))));
+            let Message::Awareness(present) = late.next().await else {
+                panic!("expected presence right after sync step 1")
+            };
+            assert_eq!(names(&present), ["first"]);
+
+            // When the first one leaves, the late joiner is told its state is gone.
+            first.leave().await;
+            let Message::Awareness(gone) = late.expect(|m| matches!(m, Message::Awareness(_))).await
+            else {
+                unreachable!()
+            };
+            assert!(gone.clients.values().all(|e| &*e.json == "null"));
+
+            late.leave().await;
+            rooms.close_and_wait(board).await;
+            db_test::delete_board(&pool, board).await;
+        }
+
+        #[tokio::test]
+        async fn pings_come_back_to_the_sender_only() {
+            let Some((pool, rooms, board)) = setup().await else { return };
+            let mut a = Client::join(&rooms, board, Role::View).await;
+            let mut b = Client::join(&rooms, board, Role::Edit).await;
+            a.next().await;
+            b.next().await;
+
+            a.send(Message::Custom(103, vec![0, 0, 0, 7])).await;
+            assert!(matches!(a.next().await, Message::Custom(103, data) if data == [0, 0, 0, 7]));
+            assert!(!b.quiet().await.iter().any(|m| matches!(m, Message::Custom(..))));
+            // Oversized pings are ignored.
+            a.send(Message::Custom(103, vec![0; 64])).await;
+            assert!(!a.quiet().await.iter().any(|m| matches!(m, Message::Custom(..))));
+
+            a.leave().await;
+            b.leave().await;
+            rooms.close_and_wait(board).await;
+            db_test::delete_board(&pool, board).await;
+        }
+
+        #[tokio::test]
+        async fn a_closed_room_saves_the_board_for_the_next_one() {
+            let Some((pool, rooms, board)) = setup().await else { return };
+            let mut a = Client::join(&rooms, board, Role::Edit).await;
+            a.next().await;
+            let doc = Doc::new();
+            a.send(edit(&doc, "x")).await;
+            a.send(edit(&doc, "y")).await;
+            a.quiet().await;
+            a.leave().await;
+            rooms.close_and_wait(board).await;
+            assert_eq!(rooms.open_rooms(), 0);
+
+            // A new room loads it: a client with nothing gets both shapes in step 2.
+            let mut b = Client::join(&rooms, board, Role::View).await;
+            b.next().await;
+            b.send(Message::Sync(SyncMessage::SyncStep1(StateVector::default()))).await;
+            let Message::Sync(SyncMessage::SyncStep2(state)) =
+                b.expect(|m| matches!(m, Message::Sync(SyncMessage::SyncStep2(_)))).await
+            else {
+                unreachable!()
+            };
+            assert_eq!(shapes_in(&state), ["x", "y"]);
+
+            b.leave().await;
+            rooms.close_and_wait(board).await;
+            db_test::delete_board(&pool, board).await;
+        }
+    }
 }

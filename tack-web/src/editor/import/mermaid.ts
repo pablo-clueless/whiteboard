@@ -9,7 +9,18 @@ import type { RefKind, Schema, SchemaField, SchemaTable } from "./dbml";
 export type FlowDirection = "TB" | "BT" | "LR" | "RL";
 
 export type FlowNodeShape =
-  "rect" | "round" | "stadium" | "circle" | "diamond" | "hexagon" | "database" | "subroutine";
+  | "rect"
+  | "round"
+  | "stadium"
+  | "circle"
+  | "diamond"
+  | "hexagon"
+  | "database"
+  | "subroutine"
+  // State diagrams: the `[*]` start and end points, and fork/join bars.
+  | "start"
+  | "end"
+  | "bar";
 
 export type FlowNode = { id: string; label: string; shape: FlowNodeShape };
 
@@ -23,7 +34,8 @@ export type FlowEdge = {
   arrowEnd: boolean;
 };
 
-export type Subgraph = { id: string; label: string; nodes: string[] };
+/** `parent` is the id of the subgraph this one sits in, when they nest. */
+export type Subgraph = { id: string; label: string; nodes: string[]; parent?: string };
 
 export type Flowchart = {
   kind: "flowchart";
@@ -46,14 +58,15 @@ function cleanLines(source: string): string[] {
 /** The diagram type on the first line, if it's one Tack can draw. */
 export function mermaidKind(
   source: string,
-): "flowchart" | "er" | "class" | "sequence" | "other" | null {
+): "flowchart" | "er" | "class" | "sequence" | "state" | "other" | null {
   const first = cleanLines(source)[0] ?? "";
   if (/^(flowchart|graph)\b/i.test(first)) return "flowchart";
   if (/^erDiagram\b/i.test(first)) return "er";
   if (/^classDiagram(-v2)?\b/i.test(first)) return "class";
   if (/^sequenceDiagram\b/i.test(first)) return "sequence";
+  if (/^stateDiagram(-v2)?\b/i.test(first)) return "state";
   if (
-    /^(stateDiagram(-v2)?|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4\w*|sankey(-beta)?|xychart(-beta)?|block(-beta)?)\b/i.test(
+    /^(gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4\w*|sankey(-beta)?|xychart(-beta)?|block(-beta)?)\b/i.test(
       first,
     )
   )
@@ -213,6 +226,153 @@ export function parseFlowchart(source: string): Flowchart {
   }
 
   return { kind: "flowchart", direction, nodes: [...nodes.values()], edges, subgraphs, warnings };
+}
+
+/* ── State diagrams ─────────────────────────────────────────────────────── */
+
+const STATE_ID = String.raw`\[\*\]|[\w\-.À-￿]+`;
+const TRANSITION = new RegExp(
+  String.raw`^(${STATE_ID})(?::::[\w-]+)?\s*-->\s*(${STATE_ID})(?::::[\w-]+)?\s*(?::\s*(.*))?$`,
+);
+const STATE_DECL =
+  /^state\s+(?:"([^"]*)"\s+as\s+)?([\w\-.À-￿]+)(?:\s+"([^"]*)")?\s*(<<\s*(choice|fork|join)\s*>>)?\s*(\{)?$/i;
+
+/**
+ * Reads `stateDiagram` / `stateDiagram-v2` as a flowchart: states are rounded boxes, `[*]` is a
+ * start or end point (one of each per composite state), composite states are subgraphs, and
+ * `<<choice>>` / `<<fork>>` / `<<join>>` are diamonds and bars. A transition to or from a
+ * composite state goes to its start point, or leaves from its end point, when it has them.
+ * Notes are left out with a warning; styling lines are ignored.
+ */
+export function parseStateDiagram(source: string): Flowchart {
+  const lines = cleanLines(source);
+  lines.shift(); // stateDiagram
+  let direction: FlowDirection = "TB";
+  const nodes = new Map<string, FlowNode>();
+  const edges: FlowEdge[] = [];
+  const subgraphs = new Map<string, Subgraph>();
+  const stack: Subgraph[] = [];
+  const warnings: string[] = [];
+
+  const scope = () => stack.at(-1);
+  const state = (id: string, label?: string, shape?: FlowNodeShape) => {
+    const existing = nodes.get(id);
+    if (existing) {
+      if (label !== undefined) existing.label = label;
+      if (shape) existing.shape = shape;
+    } else nodes.set(id, { id, label: label ?? id, shape: shape ?? "round" });
+    // A state belongs to the composite it's first mentioned in.
+    const sg = scope();
+    if (sg && ![...subgraphs.values()].some((other) => other.nodes.includes(id))) sg.nodes.push(id);
+    return id;
+  };
+  /** `[*]` is the current scope's start point as a source, and its end point as a target. */
+  const endpoint = (raw: string, as: "from" | "to") => {
+    if (raw !== "[*]") return state(raw);
+    const kind = as === "from" ? "start" : "end";
+    return state(`${scope()?.id ?? ""}[*]${kind}`, "", kind);
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/;$/, "").trim();
+    if (!line || line === "--") continue;
+    if (/^(classDef|class|style|accTitle|accDescr|hide|scale)\b/i.test(line)) continue;
+    const dir = line.match(/^direction\s+(TB|TD|BT|LR|RL)$/i);
+    if (dir) {
+      // Only the whole diagram's direction is used: dagre lays everything out one way.
+      const d = dir[1].toUpperCase();
+      if (!stack.length) direction = (d === "TD" ? "TB" : d) as FlowDirection;
+      continue;
+    }
+    if (line === "}") {
+      stack.pop();
+      continue;
+    }
+    if (/^note\b/i.test(line)) {
+      // `note left of A : text` is one line; otherwise skip to `end note`.
+      if (!line.includes(":")) while (i + 1 < lines.length && !/^end\s+note$/i.test(lines[++i]));
+      warnings.push("Notes in state diagrams are left out");
+      continue;
+    }
+
+    const decl = line.match(STATE_DECL);
+    if (decl) {
+      const id = decl[2];
+      const label = decl[1] ?? decl[3];
+      const special = decl[5]?.toLowerCase();
+      if (decl[6]) {
+        const sg: Subgraph = { id, label: label ?? id, nodes: [], parent: scope()?.id };
+        subgraphs.set(id, sg);
+        stack.push(sg);
+      } else if (special) {
+        state(id, "", special === "choice" ? "diamond" : "bar");
+      } else {
+        state(id, label);
+      }
+      continue;
+    }
+
+    const t = line.match(TRANSITION);
+    if (t) {
+      edges.push({
+        from: endpoint(t[1], "from"),
+        to: endpoint(t[2], "to"),
+        label: t[3] ? decode(t[3]) : undefined,
+        dashed: false,
+        thick: false,
+        arrowStart: false,
+        arrowEnd: true,
+      });
+      continue;
+    }
+
+    // `Id : description` names a state; a second one adds a line.
+    const described = line.match(/^([\w\-.À-￿]+)\s*:\s*(.+)$/);
+    if (described) {
+      const [id, text] = [described[1], decode(described[2])];
+      const existing = nodes.get(id);
+      state(id, existing && existing.label !== id ? `${existing.label}\n${text}` : text);
+      continue;
+    }
+    if (/^[\w\-.À-￿]+$/.test(line)) {
+      state(line);
+      continue;
+    }
+    warnings.push(`Skipped "${line}"`);
+  }
+
+  // Composite states draw as frames, not boxes. Links into one arrive at its start point (or its
+  // first state); links out of one leave from its end point (or its last state).
+  const composite = (id: string) => subgraphs.has(id);
+  const inside = (id: string, kind: "start" | "end"): string | null => {
+    const point = `${id}[*]${kind}`;
+    if (nodes.has(point)) return point;
+    const sg = subgraphs.get(id)!;
+    const plain = sg.nodes.filter((n) => !composite(n));
+    if (plain.length) return kind === "start" ? plain[0] : plain.at(-1)!;
+    // Only composites inside: go through the first (or last) of them.
+    const nested = [...subgraphs.values()].filter((s) => s.parent === id);
+    const next = kind === "start" ? nested[0] : nested.at(-1);
+    return next ? inside(next.id, kind) : null;
+  };
+  const resolved: FlowEdge[] = [];
+  for (const e of edges) {
+    const from = composite(e.from) ? inside(e.from, "end") : e.from;
+    const to = composite(e.to) ? inside(e.to, "start") : e.to;
+    if (from && to) resolved.push({ ...e, from, to });
+    else warnings.push(`Skipped a transition to or from an empty state (${e.from} → ${e.to})`);
+  }
+  for (const id of subgraphs.keys()) nodes.delete(id);
+  for (const sg of subgraphs.values()) sg.nodes = sg.nodes.filter((n) => !composite(n));
+
+  return {
+    kind: "flowchart",
+    direction,
+    nodes: [...nodes.values()],
+    edges: resolved,
+    subgraphs: [...subgraphs.values()],
+    warnings: [...new Set(warnings)],
+  };
 }
 
 /* ── Entity relationship diagrams ───────────────────────────────────────── */

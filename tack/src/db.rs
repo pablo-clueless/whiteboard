@@ -185,9 +185,12 @@ pub async fn compact(pool: &PgPool, board_id: Uuid, state: &[u8], upto_seq: i64)
 /// Copies the title from the doc (`meta.title`) to the boards table, for listing boards without
 /// loading them.
 pub async fn set_title(pool: &PgPool, board_id: Uuid, title: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE boards SET title = $2 WHERE id = $1 AND title IS DISTINCT FROM $2")
-        .bind(board_id)
-        .bind(title)
+    // A cleared title goes back to NULL, so the board reads as untitled again.
+    sqlx::query(
+        "UPDATE boards SET title = NULLIF($2, '') WHERE id = $1 AND title IS DISTINCT FROM NULLIF($2, '')",
+    )
+    .bind(board_id)
+    .bind(title.trim())
         .execute(pool)
         .await?;
     Ok(())

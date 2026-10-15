@@ -27,7 +27,10 @@ import type { BoardDoc } from "./sync/board-doc";
 import { ImportDialog } from "./ImportDialog";
 import { LabelEditor } from "./LabelEditor";
 import { ShareDialog } from "./ShareDialog";
+import { MAX_DISPLAY_NAME_LENGTH, useProfileStore } from "@/stores/user";
 import { usePublicConfig } from "@/lib/public-config";
+import { LatencyOverlay, useShowLatency } from "./LatencyOverlay";
+import { BoardTitle } from "./BoardTitle";
 import { api, type Role } from "@/lib/api";
 import { CanvasMenu } from "./CanvasMenu";
 import { ExportMenu } from "./ExportMenu";
@@ -146,6 +149,7 @@ function BoardEditor({
   }, [editor]);
 
   usePresencePublisher(editor, provider.awareness);
+  const showLatency = useShowLatency();
   // Components made on this board draw like the built-in ones.
   useBoardComponents(editor);
 
@@ -185,8 +189,11 @@ function BoardEditor({
       if (diagram) {
         e.preventDefault();
         if (diagram.kind === "unsupported") {
-          editor.notify(`${describe(diagram)}. Flowcharts and ER diagrams are.`, "info");
-        } else if (insertDiagram(editor, diagram).length) {
+          editor.notify(
+            `${describe(diagram)}. Tack draws flowcharts, ER, class, sequence and state diagrams.`,
+            "info",
+          );
+        } else if (insertDiagram(editor, diagram, text).length) {
           editor.notify(`Drew ${describe(diagram)}.`, "info");
         }
         return;
@@ -257,6 +264,8 @@ function BoardEditor({
       <LabelEditor editor={editor} />
       <Toolbar editor={editor} />
       <ComponentGroup editor={editor} />
+      <BoardTitle board={board} readOnly={editor.readOnly} />
+      {showLatency && <LatencyOverlay editor={editor} provider={provider} />}
       {!editor.readOnly && <StylePanel editor={editor} />}
       <ZoomControls editor={editor} />
       <div className="pointer-events-none absolute top-3 right-3 flex items-center gap-2">
@@ -372,13 +381,18 @@ function StatusBadge({ provider }: { provider: WebsocketProvider }) {
   const { status, synced } = useConnectionStatus(provider);
   const peersCount = usePeerCount(provider);
   const peers = usePeers(provider);
+  const me = provider.awareness.clientID;
 
+  // Everyone else; this browser gets its own row with the name field.
   const users = useMemo(() => {
     if (!peers) return [];
-    return Array.from(peers.values())
-      .map((state) => state.user)
+    return Array.from(peers)
+      .filter(([id]) => id !== me)
+      .map(([, state]) => state.user)
       .filter((user): user is NonNullable<typeof user> => user != null);
-  }, [peers]);
+  }, [peers, me]);
+  const myColor = peers?.get(me)?.user?.color;
+  const myName = peers?.get(me)?.user?.name;
 
   const label =
     status === "connected"
@@ -401,8 +415,7 @@ function StatusBadge({ provider }: { provider: WebsocketProvider }) {
         render={
           <button
             type="button"
-            title="Diagram from code (DBML, Mermaid)"
-            onClick={() => {}}
+            title="Who's here, and your name"
             className="text-ink focus-visible:ring-primary/40 pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border bg-white px-3 text-xs font-semibold shadow-sm outline-none hover:bg-[#f8f8f9] focus-visible:ring-3"
           >
             <span className={`size-2 rounded-full ${dot}`} />
@@ -415,22 +428,54 @@ function StatusBadge({ provider }: { provider: WebsocketProvider }) {
       <PopoverContent align="end" className="sm:max-w-75">
         <PopoverHeader>
           <PopoverTitle>Collaborators</PopoverTitle>
-          <PopoverDescription></PopoverDescription>
+          <PopoverDescription>Your name shows on your cursor.</PopoverDescription>
         </PopoverHeader>
         <div className="space-y-1">
+          <NameField color={myColor} current={myName} />
           {users.map((user) => (
             <div
-              className={cn(
-                "text-ink hover:bg-muted flex cursor-pointer items-center gap-x-2 rounded px-2 py-1 text-xs",
-              )}
               key={user.id}
+              className="text-ink flex items-center gap-x-2 rounded px-2 py-1 text-xs"
             >
               <span className="size-2 rounded-full" style={{ background: user.color }} />
-              <span>{user.name}</span>
+              <span className="truncate">{user.name}</span>
             </div>
           ))}
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * This browser's name on the board. Empty goes back to the account name, or an animal. Saved on
+ * Enter or clicking away, and remembered for every board.
+ */
+function NameField({ color, current }: { color?: string; current?: string }) {
+  const displayName = useProfileStore((s) => s.displayName);
+  const setDisplayName = useProfileStore((s) => s.setDisplayName);
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = () => {
+    if (draft !== null) setDisplayName(draft);
+    setDraft(null);
+  };
+  return (
+    <label className="text-ink flex items-center gap-x-2 rounded px-2 py-1 text-xs">
+      <span className="size-2 shrink-0 rounded-full" style={{ background: color }} />
+      <input
+        aria-label="Your name"
+        value={draft ?? displayName ?? ""}
+        placeholder={current ?? "Your name"}
+        maxLength={MAX_DISPLAY_NAME_LENGTH}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+        className="focus-visible:ring-primary/40 placeholder:text-ink/50 h-7 min-w-0 flex-1 rounded-md border px-2 outline-none focus-visible:ring-3"
+      />
+      <span className="text-muted-foreground shrink-0">You</span>
+    </label>
   );
 }

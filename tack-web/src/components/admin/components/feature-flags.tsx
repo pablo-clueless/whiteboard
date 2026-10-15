@@ -3,17 +3,17 @@
 import React, { type SubmitEvent, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
+import { SETTINGS_KEY, useReportDirty } from "./use-settings";
+import { SettingsHistory, SettingsSection } from "./section";
 import { useApiMutation, useApiQuery } from "@/lib/query";
-import { TabPanel } from "@/components/shared";
 import type { FeatureFlag } from "@/types/admin";
 import { Button } from "@/components/ui/button";
+import { TabPanel } from "@/components/shared";
 import { Input } from "@/components/ui/input";
+import { useConfirm } from "../confirm";
 import { TabProps } from "@/types/app";
-import { SettingsHistory, SettingsSection } from "./section";
-import { SETTINGS_KEY, useReportDirty } from "./use-settings";
 import { ToggleRow } from "../fields";
 import { EmptyNote } from "../panel";
-import { useConfirm } from "../confirm";
 
 const KEYS = [["admin", "feature-flags"], SETTINGS_KEY, ["admin", "settings-history"]];
 

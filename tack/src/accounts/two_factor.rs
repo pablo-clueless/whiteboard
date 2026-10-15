@@ -247,6 +247,7 @@ async fn enable(
     .await?;
     let recovery_codes = new_recovery_codes(&state.pool, user_id).await?;
     let user = user_by_id(&state.pool, user_id).await?.ok_or(ApiError::NotFound)?;
+    super::security_alert(&state, &user, "Two-factor sign-in was turned on", Some(&meta), None);
     audit::record(
         &state.pool,
         &user,
@@ -286,6 +287,7 @@ async fn disable(
     }
     confirm(&state, user.id, &body.code).await?;
     clear(&state.pool, user.id).await?;
+    super::security_alert(&state, &user, "Two-factor sign-in was turned off", Some(&meta), None);
     audit::record(
         &state.pool,
         &user,
@@ -322,6 +324,7 @@ async fn regenerate_codes(
     }
     confirm(&state, user.id, &body.code).await?;
     let recovery_codes = new_recovery_codes(&state.pool, user.id).await?;
+    super::security_alert(&state, &user, "New recovery codes were made", Some(&meta), None);
     audit::record(
         &state.pool,
         &user,

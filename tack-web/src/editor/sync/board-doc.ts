@@ -17,6 +17,8 @@ export type BoardDoc = {
   bindings: Y.Map<unknown>;
   /** entryId → a component people made on this board (plain JSON; see `library.ts`). */
   library: Y.Map<unknown>;
+  /** diagramId → the code a diagram was drawn from, and its shapes (see `import/diagram.ts`). */
+  diagrams: Y.Map<unknown>;
 };
 
 export function createBoardDoc(doc = new Y.Doc()): BoardDoc {
@@ -26,6 +28,7 @@ export function createBoardDoc(doc = new Y.Doc()): BoardDoc {
     shapes: doc.getMap("shapes"),
     bindings: doc.getMap("bindings"),
     library: doc.getMap("library"),
+    diagrams: doc.getMap("diagrams"),
   };
 }
 
@@ -58,6 +61,30 @@ export type BoardLockedEvents = {
   emit(event: typeof BOARD_LOCKED_EVENT, args: [boolean]): void;
 };
 
+/** Custom message: a ping the server echoes back. Matches `MSG_PING` in the server. */
+export const MESSAGE_PING = 103;
+/** Provider event emitted with the sequence number of each echoed ping. */
+export const PONG_EVENT = "pong";
+
+export type PongEvents = {
+  on(event: typeof PONG_EVENT, fn: (seq: number) => void): void;
+  off(event: typeof PONG_EVENT, fn: (seq: number) => void): void;
+  emit(event: typeof PONG_EVENT, args: [number]): void;
+};
+
+/**
+ * Sends a ping carrying `seq`. Returns false when not connected. Written by hand (tag, then a
+ * 4-byte buffer) since lib0 isn't a direct dependency.
+ */
+export function sendPing(provider: WebsocketProvider, seq: number): boolean {
+  const ws = provider.ws;
+  if (!provider.wsconnected || !ws) return false;
+  const msg = new Uint8Array([MESSAGE_PING, 4, 0, 0, 0, 0]);
+  new DataView(msg.buffer).setUint32(2, seq);
+  ws.send(msg);
+  return true;
+}
+
 export function connectBoard(
   boardId: string,
   board: BoardDoc,
@@ -75,6 +102,13 @@ export function connectBoard(
   const lockEvents = provider as unknown as BoardLockedEvents;
   provider.messageHandlers[MESSAGE_BOARD_LOCKED] = () => lockEvents.emit(BOARD_LOCKED_EVENT, [true]);
   provider.messageHandlers[MESSAGE_BOARD_UNLOCKED] = () => lockEvents.emit(BOARD_LOCKED_EVENT, [false]);
+  // The decoder sits just past the type, at the payload's one-byte length.
+  provider.messageHandlers[MESSAGE_PING] = (_encoder, decoder) => {
+    const { arr, pos } = decoder as unknown as { arr: Uint8Array; pos: number };
+    if (arr[pos] !== 4 || arr.length < pos + 5) return;
+    const seq = new DataView(arr.buffer, arr.byteOffset + pos + 1, 4).getUint32(0);
+    (provider as unknown as PongEvents).emit(PONG_EVENT, [seq]);
+  };
   return provider;
 }
 
