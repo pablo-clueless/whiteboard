@@ -24,6 +24,8 @@ export interface User {
   emailVerified: boolean;
   /** Signs in with an authenticator app code as well as the password. */
   twoFactorEnabled: boolean;
+  /** Emailed when their password, email or two-factor sign-in changes, or on a new sign-in. */
+  securityEmails: boolean;
   lastSeenAt: Maybe<string>;
 }
 

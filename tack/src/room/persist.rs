@@ -116,7 +116,7 @@ async fn compact(pool: &PgPool, board_id: BoardId, state: &[u8]) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     //! Against the dev Postgres from docker-compose (or `TACK_TEST_DATABASE_URL`). Each test uses
     //! its own new board and deletes it afterwards. Skipped, with a note, when the database isn't
     //! reachable, so `cargo test` works without Docker running.
@@ -128,7 +128,7 @@ mod tests {
 
     use super::*;
 
-    async fn pool() -> Option<PgPool> {
+    pub(in crate::room) async fn pool() -> Option<PgPool> {
         let url = std::env::var("TACK_TEST_DATABASE_URL")
             .unwrap_or_else(|_| "postgres://tack:tack@localhost:5434/tack".into());
         // Give up quickly when there's no database, rather than after the default 30 s.
@@ -149,7 +149,7 @@ mod tests {
         }
     }
 
-    async fn new_board(pool: &PgPool) -> Uuid {
+    pub(in crate::room) async fn new_board(pool: &PgPool) -> Uuid {
         let id = Uuid::new_v4();
         let (_, edit) = crate::auth::new_token();
         let (_, view) = crate::auth::new_token();
@@ -157,7 +157,7 @@ mod tests {
         id
     }
 
-    async fn delete_board(pool: &PgPool, id: Uuid) {
+    pub(in crate::room) async fn delete_board(pool: &PgPool, id: Uuid) {
         sqlx::query("DELETE FROM boards WHERE id = $1").bind(id).execute(pool).await.unwrap();
     }
 

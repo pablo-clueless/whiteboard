@@ -16,7 +16,7 @@ use super::{
     check_policy, consume_one_time, create_session, enum_str, hash_password, insert_user, issue_one_time,
     normalize_email, revoke_sessions, user_by_id, validate_email, validate_name, verify_password,
 };
-use crate::{AppState, api::ApiError, audit, mail, request_meta::RequestMeta};
+use crate::{AppState, api::ApiError, audit, request_meta::RequestMeta};
 
 /// How long an account stays locked after too many failed sign-ins.
 const LOCKOUT_MINUTES: i32 = 15;
@@ -28,7 +28,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/signin", post(signin))
         .merge(super::two_factor::router())
         .route("/api/auth/signout", post(signout))
-        .route("/api/auth/me", get(me))
+        .route("/api/auth/me", get(me).patch(super::profile::update_me))
+        .merge(super::profile::router())
         .route("/api/auth/verify-email", post(verify_email))
         .route("/api/auth/resend-verification", post(resend_verification))
         .route("/api/auth/forgot-password", post(forgot_password))
@@ -105,10 +106,10 @@ async fn signup(
     Ok((StatusCode::CREATED, Json(user)))
 }
 
-async fn send_verification(state: &AppState, user: &User) -> Result<(), ApiError> {
+pub(super) async fn send_verification(state: &AppState, user: &User) -> Result<(), ApiError> {
     let token = issue_one_time(&state.pool, user.id, OneTimeKind::VerifyEmail).await?;
     let link = format!("{}/verify-email?token={token}", state.config.app_url);
-    mail::send(
+    state.mailer.send(
         &user.email,
         "Verify your email",
         &format!("Hi {},\n\nConfirm your email: {link}\n", user.name),
@@ -234,6 +235,16 @@ pub(super) async fn complete_signin(
     meta: &RequestMeta,
 ) -> Result<SigninResponse, ApiError> {
     let security = state.settings.read(|s| s.security.clone());
+    // Signed in before, but never from this address: worth telling them.
+    let (signed_in_before, known_address): (bool, bool) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM audit_logs WHERE actor_id = $1 AND action = 'auth.signin'),
+                EXISTS (SELECT 1 FROM audit_logs WHERE actor_id = $1 AND action = 'auth.signin'
+                          AND ip IS NOT DISTINCT FROM $2)",
+    )
+    .bind(user_id)
+    .bind(meta.ip.as_deref())
+    .fetch_one(&state.pool)
+    .await?;
     let row: UserRow = sqlx::query_as(crate::db::audited(format!(
         "UPDATE users u SET failed_logins = 0, locked_until = NULL, last_ip = $2, last_browser = $3,
            last_locale = $4, last_seen_at = now()
@@ -248,6 +259,9 @@ pub(super) async fn complete_signin(
     .await?;
     let user = User::from(row);
     let session = create_session(&state.pool, user.id, meta, security.session_timeout).await?;
+    if signed_in_before && !known_address {
+        super::security_alert(state, &user, "Someone signed in to your account", Some(meta), None);
+    }
     audit::record(&state.pool, &user, "auth.signin", format!("user:{}", user.id), json!({}), Some(meta))
         .await;
     Ok(SigninResponse { session, user })
@@ -349,7 +363,7 @@ async fn forgot_password(
     if let Some((id, name, email)) = user {
         let token = issue_one_time(&state.pool, id, OneTimeKind::ResetPassword).await?;
         let link = format!("{}/reset-password?token={token}", state.config.app_url);
-        mail::send(
+        state.mailer.send(
             &email,
             "Reset your password",
             &format!("Hi {name},\n\nChoose a new password: {link}\n\nThis link works for an hour.\n"),
@@ -398,6 +412,9 @@ async fn reset_password(
     .await?;
     revoke_sessions(&state.pool, user_id).await?;
     let user = user_by_id(&state.pool, user_id).await?;
+    if let Some(user) = &user {
+        super::security_alert(&state, user, "Your password was reset", Some(&meta), None);
+    }
     let resource = format!("user:{user_id}");
     audit::record(&state.pool, user.as_ref(), "auth.password_reset", resource, json!({}), Some(&meta)).await;
     Ok(StatusCode::NO_CONTENT)

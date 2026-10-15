@@ -16,35 +16,58 @@ export function fieldsToText(fields: TableField[]): string {
     .join("\n");
 }
 
+/** `>` many-to-one, `<` one-to-many, `-` one-to-one, `<>` many-to-many, as in DBML. */
+export type FieldRefKind = ">" | "<" | "-" | "<>";
+
+/** A relationship typed on a field's line, for drawing: from that field to `table.field`. */
+export type FieldRef = { row: number; kind: FieldRefKind; table: string; field: string };
+
+/** `> teams.id`, `<> tags.id` or `- users.id` (table and field may be quoted). */
+const REF = /(<>|<|>|-)\s*"?([^\s".]+)"?\."?([^\s"\]]+)"?/;
+
 /**
  * Reads fields back from that text. Forgiving: a line is a name, then optionally a type, flags
  * (`pk`, `fk`, also DBML's `[pk]` and `[ref: …]`) and a `//` note. Blank lines are skipped.
  */
 export function textToFields(text: string): TableField[] {
+  return readFieldsText(text).fields;
+}
+
+/**
+ * Like `textToFields`, and also returns the relationships typed on fields: DBML's
+ * `[ref: > teams.id]`, or just `> teams.id` after the type. Those fields count as `fk`.
+ */
+export function readFieldsText(text: string): { fields: TableField[]; refs: FieldRef[] } {
   const fields: TableField[] = [];
+  const refs: FieldRef[] = [];
   for (const raw of text.split("\n")) {
     const [body, ...noteParts] = raw.split("//");
     const note = noteParts.join("//").trim() || undefined;
     // `[pk, ref: > users.id]` style settings count as flags too.
-    const settings = body.match(/\[(.*)\]/)?.[1]?.toLowerCase() ?? "";
-    const words = body
-      .replace(/\[.*\]/, "")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
+    const rawSettings = body.match(/\[(.*)\]/)?.[1] ?? "";
+    const settings = rawSettings.toLowerCase();
+    let outside = body.replace(/\[.*\]/, "");
+    const inline = outside.match(REF);
+    if (inline) outside = outside.replace(inline[0], " ");
+    const words = outside.trim().split(/\s+/).filter(Boolean);
     if (!words.length) continue;
     const [name, ...rest] = words;
     const flags = rest.filter((w) => /^(pk|fk)$/i.test(w)).map((w) => w.toLowerCase());
     const type = rest.filter((w) => !/^(pk|fk)$/i.test(w)).join(" ");
+    const ref = rawSettings.match(new RegExp(String.raw`\bref\s*:\s*` + REF.source, "i")) ?? inline;
+    if (ref) {
+      const [, kind, table, field] = ref;
+      refs.push({ row: fields.length, kind: kind as FieldRefKind, table, field });
+    }
     fields.push({
       name,
       type,
       pk: flags.includes("pk") || /\bpk\b|primary key/.test(settings) || undefined,
-      fk: flags.includes("fk") || /\bref\b/.test(settings) || undefined,
+      fk: flags.includes("fk") || /\bref\b/.test(settings) || !!ref || undefined,
       note,
     });
   }
-  return fields;
+  return { fields, refs };
 }
 
 /**

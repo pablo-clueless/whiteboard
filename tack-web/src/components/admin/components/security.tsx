@@ -1,10 +1,10 @@
 "use client";
 
-import type { PasswordPolicy, SecurityProps } from "@/types/system";
 import { NumberRow, RowLabel, SettingsHistory, SettingsSection } from "./section";
+import type { PasswordPolicy, SecurityProps } from "@/types/system";
 import { useSectionDraft, useSettings } from "./use-settings";
-import { TabPanel } from "@/components/shared";
 import { NativeSelect, ToggleRow } from "../fields";
+import { TabPanel } from "@/components/shared";
 import { useUserStore } from "@/stores/user";
 import { TabProps } from "@/types/app";
 
@@ -25,7 +25,8 @@ const SecurityForm = ({ saved }: { saved: SecurityProps }) => {
   const retention = draft.retentionPolicy;
   const me = useUserStore((s) => s.user);
   // Turning it on sends every admin without it, this one included, to set it up first.
-  const setUpNext = draft.twoFactorAuthentication && !saved.twoFactorAuthentication && !me?.twoFactorEnabled;
+  const setUpNext =
+    draft.twoFactorAuthentication && !saved.twoFactorAuthentication && !me?.twoFactorEnabled;
 
   return (
     <SettingsSection

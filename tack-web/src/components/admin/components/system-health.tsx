@@ -5,9 +5,9 @@ import { cn } from "cn";
 import { formatBytes, formatDuration } from "@/lib/admin";
 import { TabPanel } from "@/components/shared";
 import type { Health } from "@/types/admin";
+import { DetailRow, Panel } from "../panel";
 import { useApiQuery } from "@/lib/query";
 import { TabProps } from "@/types/app";
-import { DetailRow, Panel } from "../panel";
 
 export const SystemHealth = ({ tab }: TabProps) => {
   const { data: health } = useApiQuery<Health>({
@@ -18,8 +18,9 @@ export const SystemHealth = ({ tab }: TabProps) => {
   });
 
   const storage = health?.storage;
-  const usedShare =
-    storage?.quotaBytes ? Math.min(100, (storage.usedBytes / storage.quotaBytes) * 100) : null;
+  const usedShare = storage?.quotaBytes
+    ? Math.min(100, (storage.usedBytes / storage.quotaBytes) * 100)
+    : null;
   const largest = storage?.tables[0]?.bytes ?? 1;
 
   return (
@@ -66,7 +67,10 @@ export const SystemHealth = ({ tab }: TabProps) => {
             {usedShare !== null && (
               <div className="h-2 rounded-full bg-gray-100">
                 <div
-                  className={cn("h-full rounded-full", usedShare > 90 ? "bg-red-500" : "bg-primary")}
+                  className={cn(
+                    "h-full rounded-full",
+                    usedShare > 90 ? "bg-red-500" : "bg-primary",
+                  )}
                   style={{ width: `${usedShare}%` }}
                 />
               </div>
@@ -75,7 +79,10 @@ export const SystemHealth = ({ tab }: TabProps) => {
           <Panel className="col-span-2" title="Storage by table">
             <div className="space-y-2">
               {storage.tables.map((t) => (
-                <div className="grid grid-cols-[10rem_1fr_6rem_6rem] items-center gap-3 text-sm" key={t.name}>
+                <div
+                  className="grid grid-cols-[10rem_1fr_6rem_6rem] items-center gap-3 text-sm"
+                  key={t.name}
+                >
                   <span className="truncate font-mono text-xs">{t.name}</span>
                   <div className="h-1.5 rounded-full bg-gray-100">
                     <div

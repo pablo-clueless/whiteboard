@@ -22,10 +22,10 @@ use tokio::{
 use yrs::{
     Any, ClientID, Doc, Map, Out, ReadTxn, StateVector, Transact, Update,
     encoding::read::Cursor,
-    sync::{Awareness, AwarenessUpdate, DefaultProtocol, Message, MessageReader, Protocol, SyncMessage},
+    sync::{Awareness, AwarenessUpdate, Message, MessageReader, SyncMessage},
     updates::{
         decoder::{Decode, DecoderV1},
-        encoder::{Encode, Encoder, EncoderV1},
+        encoder::Encode,
     },
 };
 
@@ -44,6 +44,11 @@ const MSG_BOARD_FULL: u8 = 100;
 /// join while locked; both on change.
 const MSG_BOARD_LOCKED: u8 = 101;
 const MSG_BOARD_UNLOCKED: u8 = 102;
+/// A ping, echoed straight back to the sender with its payload, for the web client's dev latency
+/// overlay. It goes through the room like an update would. Matches `MESSAGE_PING` in the client.
+const MSG_PING: u8 = 103;
+/// Longest ping payload echoed; the client sends a short sequence number.
+const MAX_PING_BYTES: usize = 16;
 /// Window for the update rate shown to admins.
 const RATE_WINDOW: Duration = Duration::from_secs(60);
 
@@ -203,14 +208,20 @@ pub(super) async fn run(
 
 impl Room {
     fn join(&mut self, conn: ConnId, role: Role, info: ClientInfo, tx: mpsc::Sender<Bytes>) {
-        // Sync step 1 + current awareness, so the client sends what we're missing.
-        let mut encoder = EncoderV1::new();
-        if let Err(err) = DefaultProtocol.start(&self.awareness, &mut encoder) {
-            tracing::error!(board_id = %self.board_id, %err, "failed to encode sync start");
+        // Sync step 1, so the client sends what we're missing, then everyone's presence. Two
+        // frames: y-websocket reads only the first message in a frame, so the awareness that
+        // `DefaultProtocol::start` packs after step 1 never arrived and late joiners saw nobody.
+        let step1 = Message::Sync(SyncMessage::SyncStep1(self.awareness.doc().transact().state_vector()));
+        if tx.try_send(step1.encode_v1().into()).is_err() {
             return;
         }
-        if tx.try_send(encoder.to_vec().into()).is_err() {
-            return;
+        match self.awareness.update() {
+            Ok(update) => {
+                if tx.try_send(Message::Awareness(update).encode_v1().into()).is_err() {
+                    return;
+                }
+            }
+            Err(err) => tracing::warn!(board_id = %self.board_id, %err, "failed to encode awareness"),
         }
         self.clients.insert(conn, Client { role, info, tx, awareness_ids: HashSet::new(), told_full: false });
         // An editor joining a board that's already full should know before it edits anything.
@@ -343,6 +354,9 @@ impl Room {
                         tracing::warn!(board_id = %self.board_id, %err, "awareness query failed")
                     }
                 },
+                Message::Custom(MSG_PING, data) if data.len() <= MAX_PING_BYTES => {
+                    self.send_to(conn, &Message::Custom(MSG_PING, data))
+                }
                 Message::Auth(_) | Message::Custom(..) => {}
             }
         }

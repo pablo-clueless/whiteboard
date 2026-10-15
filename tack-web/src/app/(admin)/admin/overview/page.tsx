@@ -17,8 +17,8 @@ import Link from "next/link";
 
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { ActivityList, EmptyNote, Panel } from "@/components/admin";
-import { ButtonGroup, Statistics } from "@/components/shared";
 import { boardName, periodLabel, statItem } from "@/lib/admin";
+import { ButtonGroup, Statistics } from "@/components/shared";
 import { useValues } from "@/hooks/use-values";
 import type { Overview } from "@/types/admin";
 import { useApiQuery } from "@/lib/query";
@@ -199,13 +199,13 @@ const Page = () => {
                 <li className="flex items-center justify-between gap-4 py-2 text-sm" key={board.id}>
                   <Link
                     className="truncate font-medium hover:underline"
-                    href={`/admin/boards?board=${board.id}`}
+                    href={`/admin/boards/${board.id}`}
                   >
                     {boardName(board.name, board.id)}
                   </Link>
                   <span className="text-muted-foreground shrink-0 text-xs">
-                    {board.sessions.toLocaleString()} sessions ·{" "}
-                    {board.visitors.toLocaleString()} visitors
+                    {board.sessions.toLocaleString()} sessions · {board.visitors.toLocaleString()}{" "}
+                    visitors
                   </span>
                 </li>
               ))}
