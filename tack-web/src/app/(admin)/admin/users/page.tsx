@@ -1,10 +1,11 @@
 "use client";
 
 import { UserCheck, UserPlus, Users, UserStar } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo } from "react";
 import { toast } from "sonner";
 
-import { InviteUser, STATUS_OPTIONS, ROLE_OPTIONS, UserSheet, useConfirm } from "@/components/admin";
+import { InviteUser, STATUS_OPTIONS, ROLE_OPTIONS, useConfirm } from "@/components/admin";
 import { ButtonGroup, DataTable, Statistics } from "@/components/shared";
 import type { BulkResult, Page as ListPage, UserStats } from "@/types/admin";
 import { periodLabel, selectedIds, statItem } from "@/lib/admin";
@@ -21,7 +22,7 @@ const KEYS = [["admin", "users"], ["admin", "user"]];
 const Page = () => {
   const { onValueChange, values } = useValues({ period: PERIODS[0].value });
   const { params, tableProps, rowSelection, clearSelection } = useTableParams();
-  const [viewing, setViewing] = useState<string | null>(null);
+  const router = useRouter();
   const { dialog, confirm } = useConfirm();
 
   const stats = useApiQuery<UserStats>({
@@ -79,7 +80,7 @@ const Page = () => {
   const columns = useMemo(
     () =>
       createUserColumns({
-        onView: (user) => setViewing(user.id),
+        onView: (user) => router.push(`/admin/users/${user.id}`),
         onSetStatus: (user, status) => update.mutate({ id: user.id, status }),
         onSendReset: (user) => sendReset.mutate({ id: user.id }),
         onDelete: (user) =>
@@ -92,7 +93,7 @@ const Page = () => {
             onConfirm: () => remove.mutate({ id: user.id }),
           }),
       }),
-    // The mutations' `mutate` functions are stable.
+    // The router and the mutations' `mutate` functions are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -160,7 +161,6 @@ const Page = () => {
         }
         showPageSizeChange
       />
-      <UserSheet onClose={() => setViewing(null)} userId={viewing} />
       {dialog}
     </div>
   );

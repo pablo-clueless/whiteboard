@@ -1,5 +1,6 @@
 import "./globals.css";
 
+import { ThemeProvider } from "next-themes";
 import type { Metadata } from "next";
 import {
   Caveat,
@@ -8,6 +9,9 @@ import {
   Playfair_Display,
   Source_Serif_4,
 } from "next/font/google";
+
+import { QueryProvider } from "@/components/providers/query-provider";
+import { Toaster } from "@/components/ui/sonner";
 
 // Italics are loaded too: markdown text uses them, and the page turns off faked italics.
 const dmSans = DM_Sans({
@@ -45,13 +49,19 @@ export const metadata: Metadata = {
   description: "Real-time collaborative whiteboard",
 };
 
+const className = `${dmSans.variable} ${jetbrainsMono.variable} ${caveat.variable} ${sourceSerif.variable} ${playfair.variable}`;
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html
-      lang="en"
-      className={`${dmSans.variable} ${jetbrainsMono.variable} ${caveat.variable} ${sourceSerif.variable} ${playfair.variable} h-full antialiased`}
-    >
-      <body className="flex min-h-full flex-col">{children}</body>
+    <html lang="en" className={`h-full antialiased ${className}`}>
+      <body className="flex min-h-full flex-col">
+        <QueryProvider>
+          <ThemeProvider attribute="class" defaultTheme="light">
+            {children}
+          </ThemeProvider>
+          <Toaster />
+        </QueryProvider>
+      </body>
     </html>
   );
 }

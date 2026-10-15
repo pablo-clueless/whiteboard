@@ -20,6 +20,10 @@ pub struct Config {
     pub storage_quota_bytes: Option<u64>,
     /// Creates this superadmin at startup if no superadmin exists yet.
     pub bootstrap_admin: Option<(String, String)>,
+    /// Where email goes (see `mail::Mailer::new`). Without it, emails are only logged.
+    pub smtp_url: Option<String>,
+    /// The sender on every email.
+    pub mail_from: String,
 }
 
 impl Config {
@@ -64,6 +68,9 @@ impl Config {
             _ => None,
         };
 
+        let smtp_url = std::env::var("TACK_SMTP_URL").ok().filter(|v| !v.trim().is_empty());
+        let mail_from = std::env::var("TACK_MAIL_FROM").unwrap_or_else(|_| "Tack <tack@localhost>".into());
+
         Ok(Self {
             addr,
             allowed_origins,
@@ -73,6 +80,8 @@ impl Config {
             trust_proxy,
             storage_quota_bytes,
             bootstrap_admin,
+            smtp_url,
+            mail_from,
         })
     }
 }

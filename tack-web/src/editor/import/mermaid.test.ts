@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mermaidKind, parseErDiagram, parseFlowchart } from "./mermaid";
+import { mermaidKind, parseErDiagram, parseFlowchart, parseStateDiagram } from "./mermaid";
 
 const FLOW = `\`\`\`mermaid
 flowchart LR
@@ -24,7 +24,8 @@ describe("mermaidKind", () => {
     expect(mermaidKind("erDiagram\n A ||--o{ B : x")).toBe("er");
     expect(mermaidKind("sequenceDiagram\n A->>B: hi")).toBe("sequence");
     expect(mermaidKind("classDiagram\n A <|-- B")).toBe("class");
-    expect(mermaidKind("stateDiagram-v2\n [*] --> A")).toBe("other");
+    expect(mermaidKind("stateDiagram-v2\n [*] --> A")).toBe("state");
+    expect(mermaidKind("gantt\n title Plan")).toBe("other");
     expect(mermaidKind("just some notes")).toBeNull();
   });
 });
@@ -93,6 +94,94 @@ describe("parseErDiagram", () => {
       "CUSTOMER < ORDER (places)",
       "CUSTOMER <> ADDRESS (uses)",
       "ORDER - INVOICE (billed by)",
+    ]);
+  });
+});
+
+describe("parseStateDiagram", () => {
+  const s = parseStateDiagram(`stateDiagram-v2
+    direction LR
+    [*] --> Still
+    Still --> Moving : push
+    Moving --> Still
+    Moving --> Crash
+    Crash --> [*]
+    state "Waiting for payment" as Pay
+    Pay : card or transfer
+    Still --> Pay
+    state Pick <<choice>>
+    Pay --> Pick
+    Pick --> Done : paid
+    state Fork <<fork>>
+    state Active {
+      [*] --> Idle
+      Idle --> Busy : job
+      Busy --> [*]
+      state Inner {
+        Deep
+      }
+    }
+    Done --> Active
+    Active --> Fork
+    note right of Crash : boom
+    note left of Pay
+      several lines
+    end note
+    classDef bad fill:#f00
+    Crash:::bad`);
+  const node = (id: string) => s.nodes.find((n) => n.id === id);
+  const links = s.edges.map((e) => `${e.from}>${e.to}${e.label ? `:${e.label}` : ""}`);
+
+  it("reads states, labels, descriptions and special states", () => {
+    expect(s.direction).toBe("LR");
+    expect(node("Still")).toMatchObject({ shape: "round", label: "Still" });
+    expect(node("Pay")?.label).toBe("Waiting for payment\ncard or transfer");
+    expect(node("Pick")?.shape).toBe("diamond");
+    expect(node("Fork")?.shape).toBe("bar");
+    expect(node("[*]start")?.shape).toBe("start");
+    expect(node("[*]end")?.shape).toBe("end");
+  });
+
+  it("reads transitions with labels, scoping [*] to each composite state", () => {
+    expect(links).toEqual(
+      expect.arrayContaining([
+        "[*]start>Still",
+        "Still>Moving:push",
+        "Crash>[*]end",
+        "Pick>Done:paid",
+        "Active[*]start>Idle",
+        "Busy>Active[*]end",
+      ]),
+    );
+  });
+
+  it("draws composite states as nested subgraphs, entered and left through their own [*]", () => {
+    expect(node("Active")).toBeUndefined();
+    expect(links).toContain("Done>Active[*]start");
+    expect(links).toContain("Active[*]end>Fork");
+    const active = s.subgraphs.find((g) => g.id === "Active")!;
+    expect(active.nodes).toEqual(expect.arrayContaining(["Active[*]start", "Idle", "Busy"]));
+    expect(s.subgraphs.find((g) => g.id === "Inner")).toMatchObject({
+      parent: "Active",
+      nodes: ["Deep"],
+    });
+  });
+
+  it("leaves notes out with one warning and ignores styling", () => {
+    expect(s.warnings).toEqual(["Notes in state diagrams are left out"]);
+  });
+
+  it("enters a composite with no [*] at its first state", () => {
+    const t = parseStateDiagram(`stateDiagram
+      A --> Group
+      state Group {
+        First --> Second
+      }
+      Group --> B`);
+    expect(t.edges.map((e) => `${e.from}>${e.to}`)).toEqual([
+      "A>First",
+      "First>Second",
+      "Second>B",
     ]);
   });
 });

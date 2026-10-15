@@ -7,8 +7,8 @@ import { cn } from "cn";
 
 import { Button } from "@/components/ui/button";
 import type { AuditLog } from "@/types/admin";
-import { useApiQuery } from "@/lib/query";
 import type { Section } from "./use-settings";
+import { useApiQuery } from "@/lib/query";
 
 interface Props {
   title: string;
@@ -49,7 +49,9 @@ export const SettingsSection = ({
           dirty ? "bg-amber-50/95" : "bg-white",
         )}
       >
-        {dirty && <p className="mr-auto text-xs font-medium text-amber-700">You have unsaved changes</p>}
+        {dirty && (
+          <p className="mr-auto text-xs font-medium text-amber-700">You have unsaved changes</p>
+        )}
         <Button disabled={!dirty || saving} onClick={onReset} type="button" variant="outline">
           Discard
         </Button>
@@ -151,17 +153,29 @@ type Change = { label: string; from?: string; to: string };
 
 /** The settings one audit entry changed, nested ones (retention) flattened. */
 function describeChanges(log: AuditLog): Change[] {
-  const meta = (log.metadata ?? {}) as { changes?: Record<string, unknown>; previous?: Record<string, unknown> };
+  const meta = (log.metadata ?? {}) as {
+    changes?: Record<string, unknown>;
+    previous?: Record<string, unknown>;
+  };
   const changes: Change[] = [];
   for (const [key, to] of Object.entries(meta.changes ?? {})) {
     const from = meta.previous?.[key];
     if (to && typeof to === "object" && !Array.isArray(to)) {
       for (const [sub, value] of Object.entries(to)) {
-        const before = from && typeof from === "object" ? (from as Record<string, unknown>)[sub] : undefined;
-        changes.push({ label: LABELS[sub] ?? sub, from: before === undefined ? undefined : show(before), to: show(value) });
+        const before =
+          from && typeof from === "object" ? (from as Record<string, unknown>)[sub] : undefined;
+        changes.push({
+          label: LABELS[sub] ?? sub,
+          from: before === undefined ? undefined : show(before),
+          to: show(value),
+        });
       }
     } else {
-      changes.push({ label: LABELS[key] ?? key, from: from === undefined ? undefined : show(from), to: show(to) });
+      changes.push({
+        label: LABELS[key] ?? key,
+        from: from === undefined ? undefined : show(from),
+        to: show(to),
+      });
     }
   }
   return changes;
@@ -170,7 +184,8 @@ function describeChanges(log: AuditLog): Change[] {
 function describeFlag(log: AuditLog): string {
   const meta = (log.metadata ?? {}) as { name?: string; enabled?: boolean };
   const id = log.resource.replace(/^feature_flag:/, "");
-  if (log.action === "feature_flag.created") return `added flag ${meta.name ?? id} (${show(meta.enabled)})`;
+  if (log.action === "feature_flag.created")
+    return `added flag ${meta.name ?? id} (${show(meta.enabled)})`;
   if (log.action === "feature_flag.deleted") return `removed flag ${id}`;
   return `turned flag ${id} ${show(meta.enabled)}`;
 }
@@ -213,7 +228,8 @@ export const SettingsHistory = ({ section }: { section: Section | "flags" }) => 
                       {c.label}:{" "}
                       {c.from !== undefined && (
                         <>
-                          <span className="text-muted-foreground line-through">{c.from}</span> →{" "}
+                          <span className="text-muted-foreground line-through">{c.from}</span>{" "}
+                          →{" "}
                         </>
                       )}
                       <span className="font-medium">{c.to}</span>

@@ -5,6 +5,7 @@
 //! timeout.
 
 mod password;
+mod profile;
 pub mod routes;
 mod totp;
 pub mod two_factor;
@@ -112,6 +113,9 @@ pub struct User {
     pub email_verified: bool,
     /// Signs in with a code from an authenticator app as well as the password.
     pub two_factor_enabled: bool,
+    /// Gets an email when their password, email or two-factor sign-in changes, or they sign in
+    /// from a new address.
+    pub security_emails: bool,
     pub last_seen_at: Option<DateTime<Utc>>,
 }
 
@@ -132,7 +136,8 @@ impl User {
 
 /// Columns for [`UserRow`], with the users table aliased as `u`.
 pub const USER_COLUMNS: &str = "u.id, u.name, u.email, u.status, u.type, u.role, u.permissions, \
-    u.email_verified_at, u.totp_enabled_at, u.last_ip, u.last_browser, u.last_locale, u.last_seen_at, u.created_at, u.updated_at";
+    u.email_verified_at, u.totp_enabled_at, u.last_ip, u.last_browser, u.last_locale, u.last_seen_at, u.created_at, u.updated_at, \
+    u.security_emails";
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct UserRow {
@@ -152,6 +157,7 @@ pub struct UserRow {
     last_seen_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: Option<DateTime<Utc>>,
+    security_emails: bool,
 }
 
 impl From<UserRow> for User {
@@ -172,6 +178,7 @@ impl From<UserRow> for User {
             },
             email_verified: r.email_verified_at.is_some(),
             two_factor_enabled: r.totp_enabled_at.is_some(),
+            security_emails: r.security_emails,
             last_seen_at: r.last_seen_at,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -326,6 +333,66 @@ pub async fn revoke_sessions(pool: &PgPool, user_id: Uuid) -> sqlx::Result<u64> 
         .execute(pool)
         .await?
         .rows_affected())
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMetadata {
+    pub ip: Option<String>,
+    pub browser: Option<String>,
+    pub device: Option<String>,
+    pub locale: Option<String>,
+}
+
+/// A signed-in session, without its token. Matches `UserSession` in the web client.
+#[derive(Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInfo {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    #[sqlx(flatten)]
+    pub metadata: SessionMetadata,
+}
+
+/// A user's unexpired sessions, most recently used first.
+pub async fn load_sessions(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<SessionInfo>> {
+    sqlx::query_as(
+        "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, browser, device, locale
+         FROM user_sessions WHERE user_id = $1 AND expires_at > now() ORDER BY last_seen_at DESC",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Emails `user` that `what` happened to their account (e.g. "Your password was changed"), with
+/// where from, unless they've turned these emails off. Goes to `to` instead of their address when
+/// given: an email change warns the old address.
+pub fn security_alert(state: &AppState, user: &User, what: &str, meta: Option<&RequestMeta>, to: Option<&str>) {
+    if !user.security_emails {
+        return;
+    }
+    let from = meta
+        .map(|m| {
+            let ip = m.ip.as_deref().unwrap_or("an unknown address");
+            format!(" from {} on {} ({ip})", m.browser.as_str(), m.device.as_str())
+        })
+        .unwrap_or_default();
+    let when = Utc::now().format("%-d %B %Y at %H:%M UTC");
+    let reset = format!("{}/forgot-password", state.config.app_url);
+    state.mailer.send(
+        to.unwrap_or(&user.email),
+        &format!("Security alert: {what}"),
+        &format!(
+            "Hi {},\n\n{what}{from}, on {when}.\n\nIf this was you, there's nothing to do. If it \
+             wasn't, reset your password now: {reset}\n\nYou can turn these emails off in your \
+             account settings.\n",
+            user.name
+        ),
+    );
 }
 
 pub fn bearer(headers: &HeaderMap) -> Option<&str> {

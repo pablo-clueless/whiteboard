@@ -4,6 +4,7 @@ import {
   LayoutGrid,
   Radio,
   Settings,
+  User,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -33,7 +34,8 @@ export const ROUTES: RouteConfig[] = [
     name: "configurations",
     routes: [
       { label: "Audit Logs", href: "/admin/logs", icon: ClipboardList },
-      { label: "Settings", href: "/admin/settings", icon: Settings },
+      { label: "Configurations", href: "/admin/settings", icon: Settings },
+      { label: "Settings", href: "/admin/profile", icon: User },
     ],
   },
 ];

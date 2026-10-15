@@ -6,10 +6,17 @@ export function capitalize(value?: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-export function getBreadcrumbs(pathname: string) {
+/**
+ * One crumb per path segment, each linking to the path up to it. `labels` names segments that
+ * aren't words, such as ids; an id without one shows as "…" until it loads.
+ */
+export function getBreadcrumbs(pathname: string, labels: Record<string, string> = {}) {
   if (!pathname) return [];
   const paths = pathname.split("/").filter(Boolean);
-  return paths.map((path) => ({ label: capitalize(path), href: `/${path}` }));
+  return paths.map((path, i) => ({
+    label: labels[path] ?? (/^[0-9a-f-]{36}$/i.test(path) ? "…" : capitalize(path)),
+    href: `/${paths.slice(0, i + 1).join("/")}`,
+  }));
 }
 
 export function getDelta(delta?: string) {
@@ -45,49 +52,27 @@ export function formatDate(date?: Date | string, formatStr = "dd/MM/yy") {
   return format(parsed, formatStr);
 }
 
-export function normalizePathname(pathname?: string) {
+const segments = (path: string) => path.split(/[?#]/)[0].split("/").filter(Boolean);
+
+/**
+ * The route in `hrefs` that `pathname` is on: the deepest one whose segments all lead the path's,
+ * so `/admin/users/:id` gives `/admin/users`, and a nested route beats its parent. Whole segments
+ * are compared, so `/admin/user` doesn't match `/admin/users`. "" when nothing matches.
+ */
+export function normalizePathname(pathname: string | undefined, hrefs: readonly string[]) {
   if (!pathname) return "";
-  if (!pathname) return "";
-  const qIndex = pathname.indexOf("?");
-  const hIndex = pathname.indexOf("#");
-  const end =
-    qIndex === -1
-      ? hIndex === -1
-        ? pathname.length
-        : hIndex
-      : hIndex === -1
-        ? qIndex
-        : Math.min(qIndex, hIndex);
-  const cleanPath = pathname.slice(0, end);
-  if (cleanPath.length <= 3) return cleanPath;
-
-  let firstPart = "";
-  let secondPart = "";
-  let partCount = 0;
-  const start = cleanPath.startsWith("/") ? 1 : 0;
-
-  for (let i = start; i < cleanPath.length; i++) {
-    if (cleanPath[i] === "/") {
-      if (partCount === 0 && firstPart) {
-        partCount++;
-        continue;
-      }
-      if (partCount === 1 && secondPart) {
-        break;
-      }
-      continue;
-    }
-
-    if (partCount === 0) {
-      firstPart += cleanPath[i];
-    } else if (partCount === 1) {
-      secondPart += cleanPath[i];
+  const path = segments(pathname);
+  let best = "";
+  let depth = -1;
+  for (const href of hrefs) {
+    const route = segments(href);
+    if (route.length <= depth || route.length > path.length) continue;
+    if (route.every((segment, i) => segment === path[i])) {
+      best = href;
+      depth = route.length;
     }
   }
-
-  if (!firstPart) return "";
-  if (!secondPart) return `/${firstPart}`;
-  return `/${firstPart}/${secondPart}`;
+  return best;
 }
 
 export function removeNullorUndefined(params: Record<string, unknown>) {

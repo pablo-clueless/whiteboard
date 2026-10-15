@@ -1,12 +1,12 @@
 "use client";
 
 import { Archive, ImageIcon, LayoutGrid, Users } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 
-import { AssetBrowser, BoardSheet, useConfirm } from "@/components/admin";
 import { ButtonGroup, DataTable, Statistics, TabList } from "@/components/shared";
 import type { Board, BoardStats, BulkResult, Page as ListPage } from "@/types/admin";
+import { AssetBrowser, useConfirm } from "@/components/admin";
 import { periodLabel, selectedIds, statItem } from "@/lib/admin";
 import { createBoardColumns } from "@/config/columns/board";
 import { useTableParams } from "@/hooks/use-table-params";
@@ -15,7 +15,10 @@ import { Button } from "@/components/ui/button";
 import { useValues } from "@/hooks/use-values";
 import { PERIODS } from "@/config/params";
 
-const KEYS = [["admin", "boards"], ["admin", "board"]];
+const KEYS = [
+  ["admin", "boards"],
+  ["admin", "board"],
+];
 
 const TABS = [
   { label: "Boards", value: "boards", icon: LayoutGrid },
@@ -27,23 +30,9 @@ const STATUS_OPTIONS = [
   { label: "Archived", value: "archived" },
 ];
 
-/** `?board=<id>` (from the overview's top boards) opens that board's sheet. */
-const BoardFromUrl = ({ onOpen }: { onOpen: (id: string) => void }) => {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const id = searchParams.get("board");
-  useEffect(() => {
-    if (!id) return;
-    onOpen(id);
-    // Consume it, so closing the sheet doesn't reopen it.
-    router.replace("/admin/boards");
-  }, [id, onOpen, router]);
-  return null;
-};
-
 const Page = () => {
   const [tab, setTab] = useState(TABS[0].value);
-  const [viewing, setViewing] = useState<string | null>(null);
+  const router = useRouter();
   const { onValueChange, values } = useValues({ period: PERIODS[0].value });
   const { params, tableProps, rowSelection, clearSelection } = useTableParams();
   const { dialog, confirm } = useConfirm();
@@ -84,7 +73,7 @@ const Page = () => {
   const columns = useMemo(
     () =>
       createBoardColumns({
-        onView: (board) => setViewing(board.id),
+        onView: (board) => router.push(`/admin/boards/${board.id}`),
         onArchive: (board, archived) => archive.mutate({ id: board.id, archived }),
         onDelete: (board) =>
           confirm({
@@ -105,9 +94,6 @@ const Page = () => {
 
   return (
     <div className="space-y-6 overflow-y-auto">
-      <Suspense fallback={null}>
-        <BoardFromUrl onOpen={setViewing} />
-      </Suspense>
       <Statistics
         items={
           s
@@ -169,7 +155,6 @@ const Page = () => {
       ) : (
         <AssetBrowser />
       )}
-      <BoardSheet boardId={viewing} onClose={() => setViewing(null)} />
       {dialog}
     </div>
   );

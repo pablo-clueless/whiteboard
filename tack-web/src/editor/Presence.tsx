@@ -4,6 +4,7 @@ import { Group, Label, Path, Rect, Tag, Text } from "react-konva";
 import { useEffect, useSyncExternalStore } from "react";
 import type { Awareness } from "y-protocols/awareness";
 
+import { chosenName, CURSOR_COLORS, useProfileStore, useUserStore } from "@/stores/user";
 import { screenToPage, useEditorStore } from "@/stores/editor";
 import type { Editor } from "./editor-core";
 import type { Vec } from "./types";
@@ -11,7 +12,6 @@ import type { Vec } from "./types";
 /** Cursors go out at most this often (HANDOFF: awareness at most every 50 ms). */
 const CURSOR_INTERVAL_MS = 50;
 
-const USER_COLORS = ["#e5484d", "#f76b15", "#e2a400", "#46a758", "#0090ff", "#8e4ec6", "#d6409f"];
 const ANIMALS = [
   "Otter",
   "Heron",
@@ -41,30 +41,43 @@ export type PresenceState = {
   selection?: string[];
 };
 
-/** A colour and a friendly name, stable for this client id. */
-export function presenceUser(clientId: number): PresenceUser {
+/**
+ * A colour: the one this browser picked, else one stable for this client id. And a name: the one
+ * this browser picked, else the account name, else a friendly animal.
+ */
+export function presenceUser(
+  clientId: number,
+  name = chosenName(),
+  color = useProfileStore.getState().color,
+): PresenceUser {
   return {
     id: clientId.toString(),
-    name: `Anonymous ${ANIMALS[clientId % ANIMALS.length]}`,
-    color: USER_COLORS[clientId % USER_COLORS.length],
+    name: name || `Anonymous ${ANIMALS[clientId % ANIMALS.length]}`,
+    color: color ?? CURSOR_COLORS[clientId % CURSOR_COLORS.length],
   };
 }
 
 /**
  * Shares this client's name, pointer and selection over awareness. The pointer is throttled; the
- * selection goes out whenever it changes.
+ * selection goes out whenever it changes. Renaming, or signing in or out, updates the name live.
  */
 export function usePresencePublisher(editor: Editor, awareness: Awareness) {
   useEffect(() => {
-    awareness.setLocalStateField("user", presenceUser(awareness.clientID));
-  }, [awareness]);
-
-  useEffect(() => {
-    awareness.setLocalStateField("user", presenceUser(awareness.clientID));
-  }, [awareness]);
-
-  useEffect(() => {
-    awareness.setLocalStateField("user", presenceUser(awareness.clientID));
+    let last = "";
+    const publish = () => {
+      const user = presenceUser(awareness.clientID);
+      const key = `${user.name}\n${user.color}`;
+      if (key === last) return;
+      last = key;
+      awareness.setLocalStateField("user", user);
+    };
+    publish();
+    const stopProfile = useProfileStore.subscribe(publish);
+    const stopUser = useUserStore.subscribe(publish);
+    return () => {
+      stopProfile();
+      stopUser();
+    };
   }, [awareness]);
 
   useEffect(() => {

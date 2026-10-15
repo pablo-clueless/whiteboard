@@ -3,7 +3,16 @@
 import { AlertTriangle, CheckCircle2, Code2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { describe, detectDiagram, drawable, insertDiagram, warningsOf } from "./import/diagram";
+import {
+  describe,
+  detectDiagram,
+  diagramOf,
+  type DrawnDiagram,
+  drawable,
+  insertDiagram,
+  updateDiagram,
+  warningsOf,
+} from "./import/diagram";
 import { useEditorStore } from "@/stores/editor";
 import type { Editor } from "./editor-core";
 import {
@@ -61,30 +70,66 @@ Table posts {
     string customer_id FK
   }`,
   },
+  {
+    label: "Mermaid state",
+    code: `stateDiagram-v2
+  [*] --> Draft
+  Draft --> Review : submit
+  state Review {
+    [*] --> Checking
+    Checking --> Approved : looks good
+    Checking --> Changes : needs work
+  }
+  Changes --> Draft
+  Approved --> [*]`,
+  },
 ];
 
 /**
- * Type or paste DBML or Mermaid and get a diagram: database tables with their relationships, or
- * a flowchart. Shows what it recognised as you type. (Pasting such text straight onto the board
- * works too.)
+ * Type or paste DBML or Mermaid and get a diagram: database tables with their relationships, a
+ * flowchart, or a class, sequence or state diagram. Shows what it recognised as you type. (Pasting
+ * such text straight onto the board works too.) With part of a drawn diagram selected, it opens
+ * on that diagram's code and can redraw it in place.
  */
 export function ImportDialog({ editor }: { editor: Editor }) {
   const open = useEditorStore((s) => s.importOpen);
   const setOpen = useEditorStore((s) => s.setImportOpen);
   const [code, setCode] = useState("");
+  // The drawn diagram the selection belongs to when the dialog opened, if any.
+  const [target, setTarget] = useState<DrawnDiagram | null>(null);
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    // Opening on a diagram drawn from code starts from its code (set while rendering, so the
+    // first frame already shows it).
+    setWasOpen(open);
+    if (open) {
+      const found = editor.readOnly ? null : diagramOf(editor, editor.ui.selectedIds);
+      setTarget(found);
+      if (found) setCode(found.source);
+    }
+  }
   const detected = useMemo(() => (code.trim() ? detectDiagram(code) : null), [code]);
   const warnings = detected ? warningsOf(detected) : [];
   const ok = drawable(detected);
 
-  const insert = () => {
-    if (!ok) return;
-    insertDiagram(editor, detected);
+  const close = () => {
     setOpen(false);
     setCode("");
+    setTarget(null);
+  };
+  const insert = () => {
+    if (!ok) return;
+    insertDiagram(editor, detected, code);
+    close();
+  };
+  const update = () => {
+    if (!ok || !target) return;
+    updateDiagram(editor, target, detected, code);
+    close();
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
       <DialogContent className="p-5 sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
@@ -92,7 +137,8 @@ export function ImportDialog({ editor }: { editor: Editor }) {
           </DialogTitle>
           <DialogDescription>
             Paste or type DBML for database tables and their relationships, or Mermaid for a
-            flowchart or ER diagram. You can also paste it straight onto the board.
+            flowchart, ER, class, sequence or state diagram. You can also paste it straight onto the
+            board.
           </DialogDescription>
         </DialogHeader>
 
@@ -103,7 +149,8 @@ export function ImportDialog({ editor }: { editor: Editor }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
-              insert();
+              if (target) update();
+              else insert();
             }
           }}
           spellCheck={false}
@@ -142,7 +189,7 @@ export function ImportDialog({ editor }: { editor: Editor }) {
               <div className="min-w-0 flex-1">
                 <p className="text-ink/80 font-medium">
                   {detected.kind === "unsupported"
-                    ? `${describe(detected)}. Flowcharts and ER diagrams are.`
+                    ? `${describe(detected)}. Tack draws flowcharts, ER, class, sequence and state diagrams.`
                     : ok
                       ? describe(detected)
                       : "Nothing to draw yet."}
@@ -165,21 +212,39 @@ export function ImportDialog({ editor }: { editor: Editor }) {
         </div>
 
         <div className="flex items-center justify-end gap-2">
-          <span className="text-ink/40 mr-auto text-[11px]">Ctrl/⌘ Enter to draw</span>
+          <span className="text-ink/40 mr-auto text-[11px]">
+            Ctrl/⌘ Enter to {target ? "update" : "draw"}
+          </span>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={close}
             className="text-ink focus-visible:ring-primary/40 h-9 rounded-full px-4 text-sm font-semibold outline-none hover:bg-[#f1f1f3] focus-visible:ring-3"
           >
             Cancel
           </button>
+          {target && (
+            <button
+              type="button"
+              disabled={!ok}
+              onClick={insert}
+              title="Draw this code as a separate diagram, leaving the selected one as it is"
+              className="text-ink focus-visible:ring-primary/40 h-9 rounded-full border px-4 text-sm font-semibold outline-none hover:bg-[#f1f1f3] focus-visible:ring-3 disabled:opacity-40"
+            >
+              Draw as new
+            </button>
+          )}
           <button
             type="button"
             disabled={!ok}
-            onClick={insert}
+            onClick={target ? update : insert}
+            title={
+              target
+                ? "Redraw the selected diagram from this code, in the same place. Changes made to its shapes on the board are replaced."
+                : undefined
+            }
             className="bg-primary focus-visible:ring-primary/40 h-9 rounded-full px-5 text-sm font-semibold text-white outline-none hover:brightness-105 focus-visible:ring-3 disabled:opacity-40"
           >
-            Draw diagram
+            {target ? "Update diagram" : "Draw diagram"}
           </button>
         </div>
       </DialogContent>

@@ -1,10 +1,10 @@
 "use client";
 
-import { TabPanel } from "@/components/shared";
-import type { BoardProps } from "@/types/system";
-import { TabProps } from "@/types/app";
 import { SettingsHistory, SettingsSection } from "./section";
 import { useSectionDraft, useSettings } from "./use-settings";
+import type { BoardProps } from "@/types/system";
+import { TabPanel } from "@/components/shared";
+import { TabProps } from "@/types/app";
 import { ToggleRow } from "../fields";
 
 export const BoardConfiguration = ({ tab }: TabProps) => {
