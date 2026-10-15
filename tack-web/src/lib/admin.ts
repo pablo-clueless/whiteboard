@@ -24,7 +24,7 @@ export function statItem(icon: LucideIcon, label: string, stat: Stat | undefined
   };
 }
 
-/** The editor doesn't name boards yet, so untitled ones show the start of their id. */
+/** Untitled boards show the start of their id. */
 export function boardName(name: string | null | undefined, id: string) {
   return name?.trim() || `Untitled · ${id.slice(0, 8)}`;
 }

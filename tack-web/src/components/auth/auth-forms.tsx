@@ -25,7 +25,8 @@ import {
   TextInput,
 } from "./form";
 
-const POLICY: Record<PasswordPolicy, { min: number; hint: string }> = {
+/** What each password policy asks for, as the server checks it. */
+export const PASSWORD_POLICIES: Record<PasswordPolicy, { min: number; hint: string }> = {
   basic: { min: 8, hint: "At least 8 characters" },
   strong: { min: 12, hint: "12+ characters, mixed case, a digit and a symbol" },
 };
@@ -39,7 +40,7 @@ function usePasswordPolicy() {
       .then((config) => setPolicy(config.passwordPolicy))
       .catch(() => {});
   }, []);
-  return POLICY[policy];
+  return PASSWORD_POLICIES[policy];
 }
 
 /** Runs a submit, tracking pending state and turning a failure into a message. */

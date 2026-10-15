@@ -7,8 +7,11 @@ import { cn } from "cn";
 import { normalizePathname } from "@/lib/utils";
 import { ROUTES } from "@/config/routes";
 
+const HREFS = ROUTES.flatMap((group) => group.routes.map((route) => route.href));
+
 export const Sidebar = () => {
   const pathname = usePathname();
+  const active = normalizePathname(pathname, HREFS);
 
   return (
     <aside className="h-full w-64 border-r bg-white">
@@ -25,7 +28,7 @@ export const Sidebar = () => {
                 <p className="text-muted-foreground text-[10px] uppercase">{group.name}</p>
                 <div className="space-y-2">
                   {group.routes.map((route) => {
-                    const isActive = pathname === normalizePathname(route.href);
+                    const isActive = route.href === active;
 
                     return (
                       <Link

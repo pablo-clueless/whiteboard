@@ -76,6 +76,7 @@ const SettingsPage = () => {
   }, [dirty]);
 
   const go = (value: string) => router.replace(`${pathname}?tab=${value}`, { scroll: false });
+
   // Hidden tabs unmount, so switching would drop a draft without a word.
   const setTab = (value: string) => {
     if (value === tab) return;

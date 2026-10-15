@@ -22,7 +22,7 @@ use crate::{
         UserType, enum_str, is_valid_permission,
     },
     api::ApiError,
-    audit, mail,
+    audit,
     request_meta::RequestMeta,
 };
 
@@ -257,44 +257,12 @@ async fn send_password_link(
 ) -> Result<(), ApiError> {
     let token = accounts::issue_one_time(&state.pool, user.id, OneTimeKind::ResetPassword).await?;
     let link = format!("{}/reset-password?token={token}", state.config.app_url);
-    mail::send(
+    state.mailer.send(
         &user.email,
         subject,
         &format!("Hi {},\n\n{intro}: {link}\n\nThis link works for an hour.\n", user.name),
     );
     Ok(())
-}
-
-#[derive(Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-struct SessionMetadata {
-    ip: Option<String>,
-    browser: Option<String>,
-    device: Option<String>,
-    locale: Option<String>,
-}
-
-/// Matches `Session` in the web client.
-#[derive(Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-struct Session {
-    id: Uuid,
-    user_id: Uuid,
-    created_at: DateTime<Utc>,
-    last_seen_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
-    #[sqlx(flatten)]
-    metadata: SessionMetadata,
-}
-
-async fn load_sessions(state: &AppState, user_id: Uuid) -> sqlx::Result<Vec<Session>> {
-    sqlx::query_as(
-        "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, browser, device, locale
-         FROM user_sessions WHERE user_id = $1 AND expires_at > now() ORDER BY last_seen_at DESC",
-    )
-    .bind(user_id)
-    .fetch_all(&state.pool)
-    .await
 }
 
 #[derive(Serialize)]
@@ -305,7 +273,7 @@ struct UserDetail {
     locked_until: Option<DateTime<Utc>>,
     failed_logins: i32,
     boards_owned: i64,
-    sessions: Vec<Session>,
+    sessions: Vec<accounts::SessionInfo>,
     recent_activity: Vec<super::logs::AuditLog>,
 }
 
@@ -334,7 +302,7 @@ async fn detail(
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(UserDetail {
-        sessions: load_sessions(&state, id).await?,
+        sessions: accounts::load_sessions(&state.pool, id).await?,
         user,
         locked_until: locked_until.filter(|t| *t > Utc::now()),
         failed_logins,
@@ -592,9 +560,9 @@ async fn sessions(
     State(state): State<AppState>,
     _admin: AdminUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<Session>>, ApiError> {
+) -> Result<Json<Vec<accounts::SessionInfo>>, ApiError> {
     find(&state, id).await?;
-    Ok(Json(load_sessions(&state, id).await?))
+    Ok(Json(accounts::load_sessions(&state.pool, id).await?))
 }
 
 async fn revoke_all(
@@ -690,6 +658,8 @@ async fn reset_two_factor(
     }
     crate::accounts::two_factor::clear(&state.pool, id).await?;
     crate::accounts::revoke_sessions(&state.pool, id).await?;
+    // Their meta would say where the admin was, not them.
+    accounts::security_alert(&state, &target, "An admin turned off your two-factor sign-in", None, None);
     audit::record(&state.pool, &admin, "user.two_factor_reset", format!("user:{id}"), json!({}), Some(&meta))
         .await;
     Ok(StatusCode::NO_CONTENT)

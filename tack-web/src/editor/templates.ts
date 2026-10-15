@@ -318,17 +318,30 @@ export const TEMPLATES: Template[] = [
  * middle of the screen (or, if something's there, in clear space to the right), routes their arrows round everything now on the board, and zooms to fit
  * them. All one undo step. Returns the new shapes' ids, selected.
  */
-export function placeBuilt(editor: Editor, build: (b: Builder) => void): string[] {
+export function placeBuilt(
+  editor: Editor,
+  build: (b: Builder) => void,
+  {
+    replace = [],
+    at,
+  }: {
+    /** Shapes deleted in the same undo step, e.g. the old copy of a diagram being redrawn. */
+    replace?: string[];
+    /** Where the top-left goes, instead of the middle of the screen. */
+    at?: Vec;
+  } = {},
+): string[] {
   if (editor.readOnly) return [];
   const { camera } = editor.ui;
   const centre = {
     x: (window.innerWidth / 2 - camera.x) / camera.zoom,
     y: (window.innerHeight / 2 - camera.y) / camera.zoom,
   };
-  const before = new Set(editor.sortedIds());
   let made: string[] = [];
   editor.markHistory();
   editor.transact(() => {
+    editor.deleteShapes(replace);
+    const before = new Set(editor.sortedIds());
     build(new Builder(editor, { x: 0, y: 0 }));
     made = editor.sortedIds().filter((id) => !before.has(id));
     const box = unionBox(made.map((id) => editor.getBounds(id)));
@@ -336,14 +349,16 @@ export function placeBuilt(editor: Editor, build: (b: Builder) => void): string[
     // The middle of the screen, unless that would land on what's already there (it would end up
     // in frames, and tangled with other shapes): then just right of everything. The spatial
     // index doesn't hold the new shapes until this transaction ends, so it only sees the old.
-    let target = { x: centre.x - box.w / 2, y: centre.y - box.h / 2 };
+    let target = at ?? { x: centre.x - box.w / 2, y: centre.y - box.h / 2 };
     const margin = 40;
-    const covered = editor.shapesInBox({
-      x: target.x - margin,
-      y: target.y - margin,
-      w: box.w + margin * 2,
-      h: box.h + margin * 2,
-    }).length;
+    const covered = at
+      ? 0
+      : editor.shapesInBox({
+          x: target.x - margin,
+          y: target.y - margin,
+          w: box.w + margin * 2,
+          h: box.h + margin * 2,
+        }).length;
     const content = covered ? editor.contentBounds() : null;
     if (content) target = { x: content.x + content.w + margin * 3, y: content.y };
     const dx = target.x - box.x;

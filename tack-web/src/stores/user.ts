@@ -42,3 +42,47 @@ export function useHydrated() {
 
 /** The session token outside React, e.g. for requests. */
 export const sessionToken = () => useUserStore.getState().token;
+
+/** Longest name shown on a cursor. */
+export const MAX_DISPLAY_NAME_LENGTH = 40;
+
+/** Cursor colours to pick from; each stands out on the board and under white text. */
+export const CURSOR_COLORS = [
+  "#e5484d",
+  "#f76b15",
+  "#e2a400",
+  "#46a758",
+  "#0090ff",
+  "#8e4ec6",
+  "#d6409f",
+];
+
+type ProfileState = {
+  /** The name this browser shows to others on a board. Null means the account name, or an animal. */
+  displayName: string | null;
+  /** This browser's cursor colour. Null means one picked for each visit. */
+  color: string | null;
+  setDisplayName: (name: string) => void;
+  setColor: (color: string | null) => void;
+};
+
+/** How this browser appears to others, signed in or not. Kept in localStorage. */
+export const useProfileStore = create<ProfileState>()(
+  persist(
+    (set) => ({
+      displayName: null,
+      color: null,
+      setDisplayName: (name) =>
+        set({ displayName: name.trim().slice(0, MAX_DISPLAY_NAME_LENGTH) || null }),
+      setColor: (color) => set({ color: color && CURSOR_COLORS.includes(color) ? color : null }),
+    }),
+    { name: "profile" },
+  ),
+);
+
+/** The name to show others: the one picked here, else the account's, else null. */
+export function chosenName(): string | null {
+  return (
+    useProfileStore.getState().displayName ?? useUserStore.getState().user?.name?.trim() ?? null
+  );
+}
