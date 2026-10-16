@@ -8,6 +8,14 @@ import type { Editor } from "../editor-core";
 import { unionBox } from "../geometry";
 import { measureText } from "../shapes/text";
 import {
+  parsePlantActivity,
+  parsePlantClass,
+  parsePlantEntities,
+  parsePlantSequence,
+  parsePlantState,
+  plantumlKind,
+} from "./plantuml";
+import {
   type ClassDiagram,
   type Flowchart,
   type FlowNodeShape,
@@ -20,17 +28,34 @@ import {
   type SequenceDiagram,
 } from "./mermaid";
 
-/** What some text turned out to be, ready to draw (or why it can't be). */
-export type Detected =
+/** What some text turned out to be, ready to draw (or why it can't be). `via` names the language
+ * when it isn't Mermaid (or DBML). */
+export type Detected = (
   | { kind: "dbml" | "mermaid-er"; schema: Schema }
   | { kind: "flowchart"; chart: Flowchart }
+  | { kind: "activity"; chart: Flowchart }
   | { kind: "state"; chart: Flowchart }
   | { kind: "class"; diagram: ClassDiagram }
   | { kind: "sequence"; diagram: SequenceDiagram }
-  | { kind: "unsupported"; what: string };
+  | { kind: "unsupported"; what: string }
+) & { via?: "PlantUML" };
 
-/** Recognises DBML or Mermaid. Null when the text is neither. */
+/** Recognises DBML, Mermaid or PlantUML. Null when the text is none of them. */
 export function detectDiagram(text: string): Detected | null {
+  const puml = plantumlKind(text);
+  if (puml) {
+    const via = "PlantUML" as const;
+    if (puml === "sequence") return { kind: "sequence", diagram: parsePlantSequence(text), via };
+    if (puml === "class") return { kind: "class", diagram: parsePlantClass(text), via };
+    if (puml === "state") return { kind: "state", chart: parsePlantState(text), via };
+    if (puml === "activity") return { kind: "activity", chart: parsePlantActivity(text), via };
+    if (puml === "er") return { kind: "mermaid-er", schema: parsePlantEntities(text), via };
+    const what = text.match(/@start(\w+)/i)?.[1].toLowerCase();
+    return {
+      kind: "unsupported",
+      what: what === "uml" ? "This kind of PlantUML diagram" : `PlantUML ${what}`,
+    };
+  }
   const kind = mermaidKind(text);
   if (kind === "flowchart") return { kind: "flowchart", chart: parseFlowchart(text) };
   if (kind === "er") return { kind: "mermaid-er", schema: parseErDiagram(text) };
@@ -53,33 +78,39 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** One line describing what would be drawn, e.g. "DBML · 17 tables, 31 relationships". */
 export function describe(d: Detected): string {
   if (d.kind === "unsupported") return `${d.what} isn't supported yet`;
+  const lang = d.via ?? "Mermaid";
   if (d.kind === "flowchart") {
     const c = d.chart;
-    return `Mermaid flowchart · ${plural(c.nodes.length, "node")}, ${plural(c.edges.length, "link")}`;
+    return `${lang} flowchart · ${plural(c.nodes.length, "node")}, ${plural(c.edges.length, "link")}`;
+  }
+  if (d.kind === "activity") {
+    const c = d.chart;
+    const steps = c.nodes.filter((n) => n.shape === "rect").length;
+    return `${lang} activity diagram · ${plural(steps, "step")}, ${plural(c.edges.length, "link")}`;
   }
   if (d.kind === "state") {
     const c = d.chart;
     const states = c.nodes.filter((n) => n.shape !== "start" && n.shape !== "end").length;
-    return `Mermaid state diagram · ${plural(states, "state")}, ${plural(c.edges.length, "transition")}`;
+    return `${lang} state diagram · ${plural(states, "state")}, ${plural(c.edges.length, "transition")}`;
   }
   if (d.kind === "class") {
     const c = d.diagram;
-    return `Mermaid class diagram · ${plural(c.classes.length, "class", "classes")}, ${plural(c.relations.length, "relationship")}`;
+    return `${lang} class diagram · ${plural(c.classes.length, "class", "classes")}, ${plural(c.relations.length, "relationship")}`;
   }
   if (d.kind === "sequence") {
     const s = d.diagram;
     const messages = s.events.filter((e) => e.kind === "message").length;
-    return `Mermaid sequence diagram · ${plural(s.participants.length, "participant")}, ${plural(messages, "message")}`;
+    return `${lang} sequence diagram · ${plural(s.participants.length, "participant")}, ${plural(messages, "message")}`;
   }
   const s = d.schema;
-  const label = d.kind === "dbml" ? "DBML" : "Mermaid ER diagram";
+  const label = d.kind === "dbml" ? "DBML" : `${lang} ER diagram`;
   return `${label} · ${plural(s.tables.length, "table")}, ${plural(s.refs.length, "relationship")}`;
 }
 
 export const warningsOf = (d: Detected): string[] =>
   d.kind === "unsupported"
     ? []
-    : d.kind === "flowchart" || d.kind === "state"
+    : d.kind === "flowchart" || d.kind === "activity" || d.kind === "state"
       ? d.chart.warnings
       : d.kind === "class" || d.kind === "sequence"
         ? d.diagram.warnings
@@ -89,7 +120,7 @@ export const warningsOf = (d: Detected): string[] =>
 export const drawable = (d: Detected | null): d is Exclude<Detected, { kind: "unsupported" }> =>
   !!d &&
   d.kind !== "unsupported" &&
-  (d.kind === "flowchart" || d.kind === "state"
+  (d.kind === "flowchart" || d.kind === "activity" || d.kind === "state"
     ? d.chart.nodes.length > 0
     : d.kind === "class"
       ? d.diagram.classes.length > 0
@@ -110,7 +141,8 @@ export function insertDiagram(editor: Editor, d: Detected, source?: string): str
 }
 
 function build(b: Builder, d: Exclude<Detected, { kind: "unsupported" }>) {
-  if (d.kind === "flowchart" || d.kind === "state") buildFlowchart(b, d.chart);
+  if (d.kind === "flowchart" || d.kind === "activity" || d.kind === "state")
+    buildFlowchart(b, d.chart);
   else if (d.kind === "class") buildClassDiagram(b, d.diagram);
   else if (d.kind === "sequence") buildSequence(b, d.diagram);
   else buildSchema(b, d.schema);

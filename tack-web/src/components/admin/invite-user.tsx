@@ -62,7 +62,9 @@ export const InviteUser = () => {
             {(id) => <Input id={id} name="email" required type="email" />}
           </FormField>
           <FormField label="Role">
-            {(id) => <NativeSelect defaultValue="viewer" id={id} name="role" options={ROLE_OPTIONS} />}
+            {(id) => (
+              <NativeSelect defaultValue="viewer" id={id} name="role" options={ROLE_OPTIONS} />
+            )}
           </FormField>
           <FormField label="Password" hint="Optional.">
             {(id) => <Input autoComplete="new-password" id={id} name="password" type="password" />}

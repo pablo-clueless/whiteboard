@@ -40,9 +40,7 @@ export function useApiMutation<T = unknown, K = unknown>(options: UseApiMutation
   return useMutation({
     mutationFn: (data: T) => {
       const url = typeof options.url === "function" ? options.url(data) : options.url;
-      return options.method === "delete"
-        ? http.delete<K>(url)
-        : http[options.method]<K>(url, data);
+      return options.method === "delete" ? http.delete<K>(url) : http[options.method]<K>(url, data);
     },
     onSuccess: () => {
       invalidate.forEach((queryKey) => qc.invalidateQueries({ queryKey }));

@@ -94,7 +94,9 @@ export function SignInForm({ next }: { next?: string }) {
   };
 
   if (challenge) {
-    return <TwoFactorStep challenge={challenge} onBack={() => setChallenge(null)} onSignedIn={finish} />;
+    return (
+      <TwoFactorStep challenge={challenge} onBack={() => setChallenge(null)} onSignedIn={finish} />
+    );
   }
 
   return (
@@ -274,7 +276,10 @@ export function SignUpForm() {
             />
           )}
         </Field>
-        <Field label="Password" hint={<span className="text-ink/45 text-[13px]">{policy.hint}</span>}>
+        <Field
+          label="Password"
+          hint={<span className="text-ink/45 text-[13px]">{policy.hint}</span>}
+        >
           {(id) => (
             <PasswordInput
               id={id}

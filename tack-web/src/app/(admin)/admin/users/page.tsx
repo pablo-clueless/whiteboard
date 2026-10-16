@@ -17,7 +17,10 @@ import { useValues } from "@/hooks/use-values";
 import { PERIODS } from "@/config/params";
 import type { User } from "@/types/user";
 
-const KEYS = [["admin", "users"], ["admin", "user"]];
+const KEYS = [
+  ["admin", "users"],
+  ["admin", "user"],
+];
 
 const Page = () => {
   const { onValueChange, values } = useValues({ period: PERIODS[0].value });

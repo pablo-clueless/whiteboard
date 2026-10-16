@@ -301,7 +301,9 @@ export function parseStateDiagram(source: string): Flowchart {
       const label = decl[1] ?? decl[3];
       const special = decl[5]?.toLowerCase();
       if (decl[6]) {
-        const sg: Subgraph = { id, label: label ?? id, nodes: [], parent: scope()?.id };
+        // Keep a name given earlier (`state "Long name" as Id`, then `state Id {`).
+        const named = nodes.get(id)?.label;
+        const sg: Subgraph = { id, label: label ?? named ?? id, nodes: [], parent: scope()?.id };
         subgraphs.set(id, sg);
         stack.push(sg);
       } else if (special) {
