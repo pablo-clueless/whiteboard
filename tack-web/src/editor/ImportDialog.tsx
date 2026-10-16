@@ -83,10 +83,26 @@ Table posts {
   Changes --> Draft
   Approved --> [*]`,
   },
+  {
+    label: "PlantUML sequence",
+    code: `@startuml
+actor User
+participant "Web app" as Web
+database DB
+User -> Web : Sign in
+Web -> DB : Find account
+alt found
+  DB --> Web : Account
+  Web --> User : Welcome
+else not found
+  Web --> User : Try again
+end
+@enduml`,
+  },
 ];
 
 /**
- * Type or paste DBML or Mermaid and get a diagram: database tables with their relationships, a
+ * Type or paste DBML, Mermaid or PlantUML and get a diagram: database tables with their relationships, a
  * flowchart, or a class, sequence or state diagram. Shows what it recognised as you type. (Pasting
  * such text straight onto the board works too.) With part of a drawn diagram selected, it opens
  * on that diagram's code and can redraw it in place.
@@ -136,9 +152,9 @@ export function ImportDialog({ editor }: { editor: Editor }) {
             <Code2 className="size-5" /> Diagram from code
           </DialogTitle>
           <DialogDescription>
-            Paste or type DBML for database tables and their relationships, or Mermaid for a
-            flowchart, ER, class, sequence or state diagram. You can also paste it straight onto the
-            board.
+            Paste or type DBML for database tables and their relationships, or Mermaid or PlantUML
+            for a flowchart, activity, ER, class, sequence or state diagram. You can also paste it
+            straight onto the board.
           </DialogDescription>
         </DialogHeader>
 
@@ -154,7 +170,7 @@ export function ImportDialog({ editor }: { editor: Editor }) {
             }
           }}
           spellCheck={false}
-          aria-label="DBML or Mermaid code"
+          aria-label="DBML, Mermaid or PlantUML code"
           placeholder={
             "Table users {\n  id uuid pk\n  team uuid [ref: > teams.id]\n}\n\nor\n\nflowchart LR\n  A --> B"
           }
@@ -189,7 +205,7 @@ export function ImportDialog({ editor }: { editor: Editor }) {
               <div className="min-w-0 flex-1">
                 <p className="text-ink/80 font-medium">
                   {detected.kind === "unsupported"
-                    ? `${describe(detected)}. Tack draws flowcharts, ER, class, sequence and state diagrams.`
+                    ? `${describe(detected)}. Tack draws flowcharts, activity, ER, class, sequence and state diagrams.`
                     : ok
                       ? describe(detected)
                       : "Nothing to draw yet."}

@@ -64,7 +64,9 @@ export function useSectionDraft<T extends object>(section: Section, saved: T) {
       // Editing a setting clears its error, nested ones included.
       setErrors((e) =>
         Object.fromEntries(
-          Object.entries(e).filter(([field]) => field !== key && !field.startsWith(`${String(key)}.`)),
+          Object.entries(e).filter(
+            ([field]) => field !== key && !field.startsWith(`${String(key)}.`),
+          ),
         ),
       );
     },

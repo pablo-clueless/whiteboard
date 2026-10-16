@@ -45,7 +45,7 @@ const BoardForm = ({ saved }: { saved: BoardProps }) => {
       />
       <ToggleRow
         label="Diagram import"
-        description="Diagrams from DBML or Mermaid. Off: the editor hides From code and ignores pasted diagram code."
+        description="Diagrams from DBML, Mermaid or PlantUML. Off: the editor hides From code and ignores pasted diagram code."
         checked={draft.diagramImport}
         onCheckedChange={(v) => set("diagramImport", v)}
       />

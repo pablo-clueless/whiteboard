@@ -20,7 +20,7 @@ Browser (Next.js + Konva + Yjs) ──WebSocket /ws/boards/:id──▶ tack :80
 
 - Shapes, lines and arrows that stay attached, freehand, text with markdown, sticky notes,
   images, frames, database tables and architecture component cards
-- Diagrams from code: DBML, and Mermaid flowcharts, ER, class, sequence and state diagrams
+- Diagrams from code: DBML, and Mermaid flowcharts, ER, class, sequence and state diagrams; PlantUML sequence, class, state, activity and entity diagrams
 - Groups, align, auto-arrange, snapping, templates, undo/redo, export as PNG, SVG or PDF
 - Share links with edit and view roles; optional accounts with two-factor sign-in
 - An admin interface: live rooms, users, boards, audit logs, settings and system health
