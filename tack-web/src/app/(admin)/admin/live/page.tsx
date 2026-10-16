@@ -44,13 +44,19 @@ const StatusPill = ({ status, updatedAt }: { status: StreamStatus; updatedAt: Da
         <span
           className={cn(
             "relative inline-flex size-2 rounded-full",
-            status === "live" ? "bg-green-500" : status === "stopped" ? "bg-red-500" : "bg-amber-500",
+            status === "live"
+              ? "bg-green-500"
+              : status === "stopped"
+                ? "bg-red-500"
+                : "bg-amber-500",
           )}
         />
       </span>
       <span>{label}</span>
       {updatedAt && status === "live" && (
-        <span title={updatedAt.toLocaleString()}>· updated {formatDate(updatedAt, "HH:mm:ss")}</span>
+        <span title={updatedAt.toLocaleString()}>
+          · updated {formatDate(updatedAt, "HH:mm:ss")}
+        </span>
       )}
     </div>
   );
@@ -79,7 +85,13 @@ const Bars = ({ counts, total }: { counts: Record<string, number>; total: number
   );
 };
 
-const Badge = ({ children, tone }: { children: React.ReactNode; tone: "amber" | "red" | "gray" }) => (
+const Badge = ({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone: "amber" | "red" | "gray";
+}) => (
   <span
     className={cn(
       "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
@@ -173,15 +185,18 @@ const ConnectionItem = ({
         <p className="truncate font-medium">
           {c.userName ?? "Anonymous"}{" "}
           {showBoard && (
-            <span className="text-muted-foreground font-normal">on {boardName(c.boardTitle, c.boardId)}</span>
+            <span className="text-muted-foreground font-normal">
+              on {boardName(c.boardTitle, c.boardId)}
+            </span>
           )}
         </p>
         <p className="text-muted-foreground truncate text-xs">
           <span className={c.role === "edit" ? "text-primary font-medium" : undefined}>
             {c.role === "edit" ? "Editing" : "Viewing"}
           </span>{" "}
-          · <span className="capitalize">{c.browser}</span> · <span className="capitalize">{c.device}</span> ·
-          joined {formatDistanceToNow(new Date(c.connectedAt), { addSuffix: true })}
+          · <span className="capitalize">{c.browser}</span> ·{" "}
+          <span className="capitalize">{c.device}</span> · joined{" "}
+          {formatDistanceToNow(new Date(c.connectedAt), { addSuffix: true })}
         </p>
       </div>
     </div>
@@ -229,7 +244,9 @@ const Page = () => {
 
   // A room that closed drops out of the selection on its own.
   const selected = data?.rooms.find((r) => r.boardId === selectedId) ?? null;
-  const connections = (data?.connections ?? []).filter((c) => !selected || c.boardId === selected.boardId);
+  const connections = (data?.connections ?? []).filter(
+    (c) => !selected || c.boardId === selected.boardId,
+  );
   const timeline = (data?.timeline ?? []).map((p) => ({
     time: formatDate(p.time, "HH:mm"),
     connections: p.connections,
@@ -293,7 +310,9 @@ const Page = () => {
         </Panel>
         <Panel
           className="lg:col-span-2"
-          title={selected ? `On ${boardName(selected.title, selected.boardId)}` : "Everyone Connected"}
+          title={
+            selected ? `On ${boardName(selected.title, selected.boardId)}` : "Everyone Connected"
+          }
           action={
             selected ? (
               <div className="flex items-center gap-1.5">
@@ -346,11 +365,11 @@ const Page = () => {
                   <X />
                 </Button>
               </div>
-            ) : (
-              data?.rooms.length ? (
-                <span className="text-muted-foreground text-xs">Pick a room to see who&apos;s on it</span>
-              ) : null
-            )
+            ) : data?.rooms.length ? (
+              <span className="text-muted-foreground text-xs">
+                Pick a room to see who&apos;s on it
+              </span>
+            ) : null
           }
         >
           {connections.length ? (
@@ -367,7 +386,11 @@ const Page = () => {
             </ul>
           ) : (
             <EmptyNote>
-              {isPending ? "Loading…" : selected ? "Nobody is on this board." : "Nobody is connected right now."}
+              {isPending
+                ? "Loading…"
+                : selected
+                  ? "Nobody is on this board."
+                  : "Nobody is connected right now."}
             </EmptyNote>
           )}
         </Panel>

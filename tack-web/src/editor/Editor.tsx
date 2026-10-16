@@ -126,7 +126,9 @@ function BoardEditor({
       await api.setBoardLocked(boardId, token, lock);
       // The server tells everyone, this tab included; set it now so the button doesn't lag.
       editor.ui.setBoardLocked(lock);
-      toast(lock ? "Board locked. Nobody can edit it until an editor unlocks it." : "Board unlocked");
+      toast(
+        lock ? "Board locked. Nobody can edit it until an editor unlocks it." : "Board unlocked",
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't change the lock");
     } finally {
@@ -184,13 +186,13 @@ function BoardEditor({
         e.preventDefault();
         return;
       }
-      // DBML or Mermaid becomes a diagram, unless an admin turned diagram import off.
+      // DBML, Mermaid or PlantUML becomes a diagram, unless an admin turned diagram import off.
       const diagram = text && canImport ? detectDiagram(text) : null;
       if (diagram) {
         e.preventDefault();
         if (diagram.kind === "unsupported") {
           editor.notify(
-            `${describe(diagram)}. Tack draws flowcharts, ER, class, sequence and state diagrams.`,
+            `${describe(diagram)}. Tack draws flowcharts, activity, ER, class, sequence and state diagrams.`,
             "info",
           );
         } else if (insertDiagram(editor, diagram, text).length) {
@@ -278,7 +280,7 @@ function BoardEditor({
         {!editor.readOnly && canImport && (
           <button
             type="button"
-            title="Diagram from code (DBML, Mermaid)"
+            title="Diagram from code (DBML, Mermaid, PlantUML)"
             onClick={() => editor.ui.setImportOpen(true)}
             className="text-ink focus-visible:ring-primary/40 pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border bg-white px-3 text-xs font-semibold shadow-sm outline-none hover:bg-[#f8f8f9] focus-visible:ring-3"
           >
