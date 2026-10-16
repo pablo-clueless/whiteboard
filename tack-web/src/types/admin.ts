@@ -90,7 +90,12 @@ export type UserSession = {
   createdAt: string;
   lastSeenAt: string;
   expiresAt: string;
-  metadata: { ip: string | null; browser: string | null; device: string | null; locale: string | null };
+  metadata: {
+    ip: string | null;
+    browser: string | null;
+    device: string | null;
+    locale: string | null;
+  };
 };
 
 export type UserDetail = User & {

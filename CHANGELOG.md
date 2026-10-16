@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- PlantUML (`@startuml … @enduml`), pasted or in "From code": sequence, class, state, activity
+  (`:step;` syntax) and entity (IE) diagrams. Other PlantUML diagrams say they aren't supported.
 - Board names: editors rename a board in the top-left field, everyone sees it live, and it shows
   in the browser tab. The server copies it to `boards.title`, so the admin shows it too.
 - People's names: pick the name on your cursor from the collaborators popover. It's remembered in
