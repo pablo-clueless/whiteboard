@@ -67,9 +67,7 @@ export const ToggleRow = ({
     <div className="flex items-start justify-between gap-6 py-3">
       <label className="space-y-0.5" htmlFor={id}>
         <span className="block text-sm font-medium">{label}</span>
-        {description && (
-          <span className="text-muted-foreground block text-xs">{description}</span>
-        )}
+        {description && <span className="text-muted-foreground block text-xs">{description}</span>}
       </label>
       <Switch
         checked={checked}

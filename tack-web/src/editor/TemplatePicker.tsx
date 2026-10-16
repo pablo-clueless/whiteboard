@@ -263,7 +263,7 @@ export function TemplatePicker({
               <span className="flex flex-col gap-0.5 border-t p-3">
                 <span className="text-ink text-[13px] font-semibold">From code</span>
                 <span className="text-ink/55 text-xs leading-snug">
-                  Paste DBML or Mermaid and get tables or a flowchart.
+                  Paste DBML, Mermaid or PlantUML and get a diagram.
                 </span>
               </span>
             </button>

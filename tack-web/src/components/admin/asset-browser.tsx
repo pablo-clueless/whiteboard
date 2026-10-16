@@ -24,7 +24,10 @@ const MIME_OPTIONS = ["image/png", "image/jpeg", "image/webp", "image/gif"].map(
   value: m,
 }));
 
-const KEYS = [["admin", "assets"], ["admin", "boards"]];
+const KEYS = [
+  ["admin", "assets"],
+  ["admin", "boards"],
+];
 
 /** Uploaded images: browse by board and type, delete one, or clean up the ones nothing uses. */
 export const AssetBrowser = () => {
@@ -84,7 +87,11 @@ export const AssetBrowser = () => {
             header: "Type",
             cell: ({ row }) => row.original.mime.replace("image/", "").toUpperCase(),
           },
-          { accessorKey: "size", header: "Size", cell: ({ row }) => formatBytes(row.original.size) },
+          {
+            accessorKey: "size",
+            header: "Size",
+            cell: ({ row }) => formatBytes(row.original.size),
+          },
           {
             accessorKey: "createdAt",
             header: "Uploaded",

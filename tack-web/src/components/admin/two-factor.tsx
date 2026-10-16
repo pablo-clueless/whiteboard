@@ -77,8 +77,13 @@ const RecoveryCodes = ({ codes, onDone }: { codes: string[]; onDone: () => void 
   const [saved, setSaved] = useState(false);
   const text = codes.join("\n");
   const download = () => {
-    const url = URL.createObjectURL(new Blob([`Tack recovery codes\n\n${text}\n`], { type: "text/plain" }));
-    const a = Object.assign(document.createElement("a"), { href: url, download: "tack-recovery-codes.txt" });
+    const url = URL.createObjectURL(
+      new Blob([`Tack recovery codes\n\n${text}\n`], { type: "text/plain" }),
+    );
+    const a = Object.assign(document.createElement("a"), {
+      href: url,
+      download: "tack-recovery-codes.txt",
+    });
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -144,7 +149,8 @@ export const TwoFactorSetup = ({ onDone }: { onDone: (user: User) => void }) => 
           password.
         </p>
         <Button className="w-full" disabled={starting} onClick={start}>
-          {starting ? <Loader2 className="animate-spin" /> : <KeyRound />} Set up an authenticator app
+          {starting ? <Loader2 className="animate-spin" /> : <KeyRound />} Set up an authenticator
+          app
         </Button>
       </div>
     );
@@ -175,7 +181,9 @@ export const TwoFactorSetup = ({ onDone }: { onDone: (user: User) => void }) => 
         />
       </div>
       <details className="text-sm">
-        <summary className="text-muted-foreground cursor-pointer text-xs">Can&apos;t scan it?</summary>
+        <summary className="text-muted-foreground cursor-pointer text-xs">
+          Can&apos;t scan it?
+        </summary>
         <div className="mt-2 flex items-center gap-2">
           <code className="min-w-0 flex-1 rounded bg-gray-100 px-2 py-1 font-mono text-xs break-all">
             {setup.secret.match(/.{1,4}/g)?.join(" ")}
@@ -249,9 +257,12 @@ export const TwoFactorDialog = ({
         className="space-y-3"
         onSubmit={submit(async (code) => {
           if (action === "codes") {
-            const r = await http.post<{ recoveryCodes: string[] }>("/api/auth/two-factor/recovery-codes", {
-              code,
-            });
+            const r = await http.post<{ recoveryCodes: string[] }>(
+              "/api/auth/two-factor/recovery-codes",
+              {
+                code,
+              },
+            );
             setCodes(r.recoveryCodes);
           } else {
             setUser(await http.post<User>("/api/auth/two-factor/disable", { code }));
@@ -270,7 +281,11 @@ export const TwoFactorDialog = ({
           <Button onClick={() => setAction(null)} type="button" variant="outline">
             Back
           </Button>
-          <Button disabled={pending} type="submit" variant={action === "disable" ? "destructive" : "default"}>
+          <Button
+            disabled={pending}
+            type="submit"
+            variant={action === "disable" ? "destructive" : "default"}
+          >
             {action === "codes" ? "Make new codes" : "Turn off"}
           </Button>
         </div>

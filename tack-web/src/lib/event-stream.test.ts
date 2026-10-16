@@ -36,7 +36,10 @@ describe("parseEvent", () => {
 
 describe("readEvents", () => {
   it("puts events split across chunks back together", async () => {
-    const events = await collect(['event: live\ndata: {"n"', ":1}\n\n:\n\nevent: live\r\ndata: 2\r\n\r\n"]);
+    const events = await collect([
+      'event: live\ndata: {"n"',
+      ":1}\n\n:\n\nevent: live\r\ndata: 2\r\n\r\n",
+    ]);
     expect(events).toEqual([
       { event: "live", data: '{"n":1}' },
       { event: "live", data: "2" },
