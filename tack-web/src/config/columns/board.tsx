@@ -52,7 +52,9 @@ export const createBoardColumns = (actions: BoardActions) =>
         accessorKey: "sizeBytes",
         header: "Size",
         cell: ({ row }) => (
-          <span title={`${row.original.assetCount} images, ${formatBytes(row.original.assetBytes)}`}>
+          <span
+            title={`${row.original.assetCount} images, ${formatBytes(row.original.assetBytes)}`}
+          >
             {formatBytes(row.original.sizeBytes + row.original.assetBytes)}
           </span>
         ),

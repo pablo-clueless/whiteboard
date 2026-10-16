@@ -1,17 +1,20 @@
 {
   "default_branch": "main",
   "branches": [
+    "claude/laughing-clarke-6718sf",
     "features/whiteboard",
     "main",
     "origin"
   ],
   "parent": {
+    "claude/laughing-clarke-6718sf": "main",
     "features/whiteboard": "main",
     "main": null,
     "origin": "main"
   },
   "order": [
     "main",
+    "claude/laughing-clarke-6718sf",
     "features/whiteboard",
     "origin"
   ]

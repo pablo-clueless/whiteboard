@@ -100,8 +100,10 @@ export function connectBoard(
   provider.messageHandlers[MESSAGE_BOARD_FULL] = () =>
     (provider as unknown as BoardFullEvents).emit(BOARD_FULL_EVENT, []);
   const lockEvents = provider as unknown as BoardLockedEvents;
-  provider.messageHandlers[MESSAGE_BOARD_LOCKED] = () => lockEvents.emit(BOARD_LOCKED_EVENT, [true]);
-  provider.messageHandlers[MESSAGE_BOARD_UNLOCKED] = () => lockEvents.emit(BOARD_LOCKED_EVENT, [false]);
+  provider.messageHandlers[MESSAGE_BOARD_LOCKED] = () =>
+    lockEvents.emit(BOARD_LOCKED_EVENT, [true]);
+  provider.messageHandlers[MESSAGE_BOARD_UNLOCKED] = () =>
+    lockEvents.emit(BOARD_LOCKED_EVENT, [false]);
   // The decoder sits just past the type, at the payload's one-byte length.
   provider.messageHandlers[MESSAGE_PING] = (_encoder, decoder) => {
     const { arr, pos } = decoder as unknown as { arr: Uint8Array; pos: number };
